@@ -14,3 +14,9 @@ socket.on('connect', () => {
 socket.on('disconnect', () => {
     console.log('Disconnected from the server');
 });
+
+
+// handle version status
+socket.on(`deploy-version-${token}`, (data) => {
+    console.log('version-status', data);
+});
