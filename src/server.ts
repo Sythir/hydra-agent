@@ -23,8 +23,14 @@ socket.on("disconnect", () => {
   console.log("Disconnected from the server");
 });
 
-socket.on(`deploy-version-${token}`, (data: Data) => {
-  handleDeployMessage(data, operatingSystem);
+socket.on(`deploy-version-${token}`, async (data: Data) => {
+  socket.emit(`version-status`, { status: "in-progress", appCode: data.application.code, projectCode: data.project.code, envId: data.environment.id });
+  await handleDeployMessage(data, operatingSystem);
+
+  setTimeout(() => {
+    socket.emit(`version-status`, { status: "success", appCode: data.application.code, projectCode: data.project.code, envId: data.environment.id });
+
+  }, 5000)
 });
 
 // handle version status this was an old variant

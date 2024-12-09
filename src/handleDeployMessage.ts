@@ -7,7 +7,7 @@ import { logMessage } from './utils/logMessage';
 import { execSync } from 'child_process';
 import { createDirectoryIfNotExists } from './utils/createDirectoryIfNotExists';
 
-export const handleDeployMessage = (data: Data, operatingSystem: "windows" | "linux") => {
+export const handleDeployMessage = async (data: Data, operatingSystem: "windows" | "linux") => {
   const { script } = data;
   if (!script) return;
 
