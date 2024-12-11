@@ -12,7 +12,6 @@ const socket = io(process.env.HOST, {
 });
 const platform = os.platform();
 const operatingSystem = platform === "win32" ? "windows" : "linux";
-console.log(process.env.AGENT_KEY, process.env.HOST);
 // Handle connection
 socket.on("connect", () => {
   console.log("Connected to the Socket.IO server");
@@ -23,17 +22,70 @@ socket.on("disconnect", () => {
   console.log("Disconnected from the server");
 });
 
-socket.on(`deploy-version-${token}`, async (data: Data) => {
-  socket.emit(`version-status`, { status: "in-progress", appCode: data.application.code, projectCode: data.project.code, envId: data.environment.id });
-  await handleDeployMessage(data, operatingSystem);
+const queue: any[] = [];
+let isProcessing = false;
 
-  setTimeout(() => {
-    socket.emit(`version-status`, { status: "success", appCode: data.application.code, projectCode: data.project.code, envId: data.environment.id });
-
-  }, 5000)
+socket.on(`deploy-version-${token}`, async (data) => {
+  // Add the data to the queue
+  queue.push(data);
+  console.log(queue);
+  socket.emit(`version-status`, {
+    status: "pending",
+    appCode: data.application.code,
+    projectCode: data.project.code,
+    envId: data.environment.id,
+  });
+  // Process the queue if not already processing
+  if (!isProcessing) {
+    processQueue();
+  }
 });
 
-// handle version status this was an old variant
+async function processQueue() {
+  if (queue.length === 0) {
+    isProcessing = false; // No more tasks to process
+    return;
+  }
+
+  isProcessing = true;
+  const data = queue.shift(); // Get the first item in the queue
+
+  try {
+    // Emit 'in-progress' status
+    socket.emit(`version-status`, {
+      status: "in-progress",
+      appCode: data.application.code,
+      projectCode: data.project.code,
+      envId: data.environment.id,
+    });
+
+    // Process the deployment
+    await handleDeployMessage(data, operatingSystem);
+
+    // Simulate processing delay (if needed)
+    setTimeout(() => {
+      socket.emit(`version-status`, {
+        status: "success",
+        appCode: data.application.code,
+        projectCode: data.project.code,
+        envId: data.environment.id,
+      });
+
+      // Continue with the next task in the queue
+      processQueue();
+    }, 5000);
+  } catch (error) {
+    socket.emit(`version-status`, {
+      status: "error",
+      appCode: data.application.code,
+      projectCode: data.project.code,
+      envId: data.environment.id,
+    });
+
+    // Continue with the next task in the queue
+    processQueue();
+  }
+}// handle version status this was an old variant
 // socket.on(`deploy-version-${token}`, (data: any) => {
 //   fs.writeFile("script.js", data.script, (err: any) => {
 //     if (err) throw err;
