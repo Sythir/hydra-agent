@@ -4,8 +4,28 @@ import { createDeployHash } from './utils/createDeployHash';
 import os from 'os';
 import path from 'path';
 import { logMessage } from './utils/logMessage';
-import { execSync } from 'child_process';
+import { exec } from 'child_process';
 import { createDirectoryIfNotExists } from './utils/createDirectoryIfNotExists';
+import util from 'util';
+
+const execAsync = util.promisify(exec);
+
+async function runDeployScript(deployScript: string, deployFolderName: string) {
+  try {
+    const { stdout, stderr } = await execAsync(deployScript, { encoding: 'utf8' });
+    if (stderr) {
+      logMessage(deployFolderName, "error", `Error executing deploy script: ${stderr}`);
+    } else {
+      logMessage(deployFolderName, "info", "Output deploy script: " + stdout.toString());
+      logMessage(deployFolderName, "info", `Deploy script completed successfully`);
+    }
+    return stdout;
+  } catch (error: any) {
+    logMessage(deployFolderName, "error", `Deploy execution failed: ${error.message}`);
+    throw error;
+  }
+}
+
 
 export const handleDeployMessage = async (data: Data, operatingSystem: "windows" | "linux") => {
   const { script } = data;
@@ -26,10 +46,7 @@ export const handleDeployMessage = async (data: Data, operatingSystem: "windows"
       fs.writeFileSync(scriptPath, script);
       logMessage(deployFolderName, "info", `Deploy script written to ${scriptPath}`);
 
-      // Execute the PowerShell script
-      const output = execSync(`powershell -ExecutionPolicy Bypass -File "${scriptPath}"`, { encoding: 'utf8' });
-      logMessage(deployFolderName, "info", "Output deploy script: " + output.toString());
-      logMessage(deployFolderName, "info", `Deploy script completed successfully`);
+      await runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
     } catch (err) {
       logMessage(deployFolderName, "error", `Error handling deploy script: ${err}`);
       return;
@@ -39,9 +56,7 @@ export const handleDeployMessage = async (data: Data, operatingSystem: "windows"
       fs.writeFileSync(`${deployFolderLocation}/deploy-script.sh`, script);
       logMessage(deployFolderName, "info", `Deploy script written to ${deployFolderLocation}/deploy-script.sh`);
 
-      const output = execSync(`sh ${deployFolderLocation}/deploy-script.sh`, { encoding: 'utf8' });
-      logMessage(deployFolderName, "info", "Output deploy script: " + output.toString());
-      logMessage(deployFolderName, "info", `Deploy script completed successfully`);
+      await runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
     } catch (err) {
       logMessage(deployFolderName, "error", `Error handling deploy script: ${err}`);
       return;
