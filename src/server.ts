@@ -11,12 +11,14 @@ const operatingSystem = platform === "win32" ? "windows" : "linux";
 
 socket.on("connect", () => {
   console.log("Connected to the Socket.IO server");
+  socket.emit('register-key');
 });
 
 // Handle disconnection
 socket.on("disconnect", () => {
   console.log("Disconnected from the server");
 });
+
 
 const queue: any[] = [];
 let isProcessing = false;
