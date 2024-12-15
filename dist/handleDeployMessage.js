@@ -20,6 +20,38 @@ const path_1 = __importDefault(require("path"));
 const logMessage_1 = require("./utils/logMessage");
 const child_process_1 = require("child_process");
 const createDirectoryIfNotExists_1 = require("./utils/createDirectoryIfNotExists");
+const util_1 = __importDefault(require("util"));
+const execAsync = util_1.default.promisify(child_process_1.exec);
+function runDeployScript(deployScript, deployFolderName) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const timeout = Number(process.env.DEPLOY_TIMEOUT_IN_SECONDS || 10) * 1000;
+        (0, logMessage_1.logMessage)(deployFolderName, "info", `Starting deploy script execution`);
+        const scriptExecution = execAsync(deployScript, { encoding: 'utf8' });
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => {
+                reject(new Error(`Deploy script execution timed out after ${timeout / 1000} seconds`));
+            }, timeout);
+        });
+        try {
+            const { stdout, stderr } = yield Promise.race([scriptExecution, timeoutPromise]);
+            if (stderr) {
+                throw new Error(`Error executing deploy script: ${stderr}`);
+            }
+            else {
+                (0, logMessage_1.logMessage)(deployFolderName, "info", "Output deploy script: " + stdout.toString());
+                (0, logMessage_1.logMessage)(deployFolderName, "info", `Deploy script completed successfully`);
+            }
+            return stdout;
+        }
+        catch (error) {
+            if (scriptExecution.child) {
+                scriptExecution.child.kill('SIGTERM'); // Terminate the script if still running
+            }
+            (0, logMessage_1.logMessage)(deployFolderName, "error", `Deploy execution failed: ${error.message}, if this timeout is too short, you can increase it in the env variables`);
+            throw error;
+        }
+    });
+}
 const handleDeployMessage = (data, operatingSystem) => __awaiter(void 0, void 0, void 0, function* () {
     const { script } = data;
     if (!script)
@@ -38,27 +70,21 @@ const handleDeployMessage = (data, operatingSystem) => __awaiter(void 0, void 0,
             const scriptPath = `${deployFolderLocation}/deploy-script.ps1`;
             fs_1.default.writeFileSync(scriptPath, script);
             (0, logMessage_1.logMessage)(deployFolderName, "info", `Deploy script written to ${scriptPath}`);
-            // Execute the PowerShell script
-            const output = (0, child_process_1.execSync)(`powershell -ExecutionPolicy Bypass -File "${scriptPath}"`, { encoding: 'utf8' });
-            (0, logMessage_1.logMessage)(deployFolderName, "info", "Output deploy script: " + output.toString());
-            (0, logMessage_1.logMessage)(deployFolderName, "info", `Deploy script completed successfully`);
+            yield runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
         }
         catch (err) {
             (0, logMessage_1.logMessage)(deployFolderName, "error", `Error handling deploy script: ${err}`);
-            return;
+            throw err;
         }
     }
     else {
         try {
             fs_1.default.writeFileSync(`${deployFolderLocation}/deploy-script.sh`, script);
             (0, logMessage_1.logMessage)(deployFolderName, "info", `Deploy script written to ${deployFolderLocation}/deploy-script.sh`);
-            const output = (0, child_process_1.execSync)(`sh ${deployFolderLocation}/deploy-script.sh`, { encoding: 'utf8' });
-            (0, logMessage_1.logMessage)(deployFolderName, "info", "Output deploy script: " + output.toString());
-            (0, logMessage_1.logMessage)(deployFolderName, "info", `Deploy script completed successfully`);
+            yield runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
         }
         catch (err) {
-            (0, logMessage_1.logMessage)(deployFolderName, "error", `Error handling deploy script: ${err}`);
-            return;
+            throw err;
         }
     }
 });

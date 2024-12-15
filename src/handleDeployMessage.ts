@@ -11,17 +11,33 @@ import util from 'util';
 const execAsync = util.promisify(exec);
 
 async function runDeployScript(deployScript: string, deployFolderName: string) {
+  const timeout = Number(process.env.DEPLOY_TIMEOUT_IN_SECONDS || 10) * 1000;
+
+  logMessage(deployFolderName, "info", `Starting deploy script execution`);
+  const scriptExecution = execAsync(deployScript, { encoding: 'utf8' });
+
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => {
+      reject(new Error(`Deploy script execution timed out after ${timeout / 1000} seconds`));
+    }, timeout);
+  });
+
   try {
-    const { stdout, stderr } = await execAsync(deployScript, { encoding: 'utf8' });
+    const { stdout, stderr } = await Promise.race([scriptExecution, timeoutPromise]) as any;
+
     if (stderr) {
-      logMessage(deployFolderName, "error", `Error executing deploy script: ${stderr}`);
+      throw new Error(`Error executing deploy script: ${stderr}`);
     } else {
       logMessage(deployFolderName, "info", "Output deploy script: " + stdout.toString());
       logMessage(deployFolderName, "info", `Deploy script completed successfully`);
     }
+
     return stdout;
   } catch (error: any) {
-    logMessage(deployFolderName, "error", `Deploy execution failed: ${error.message}`);
+    if (scriptExecution.child) {
+      scriptExecution.child.kill('SIGTERM'); // Terminate the script if still running
+    }
+    logMessage(deployFolderName, "error", `Deploy execution failed: ${error.message}, if this timeout is too short, you can increase it in the env variables`);
     throw error;
   }
 }
@@ -49,7 +65,7 @@ export const handleDeployMessage = async (data: Data, operatingSystem: "windows"
       await runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
     } catch (err) {
       logMessage(deployFolderName, "error", `Error handling deploy script: ${err}`);
-      return;
+      throw err;
     }
   } else {
     try {
@@ -58,8 +74,7 @@ export const handleDeployMessage = async (data: Data, operatingSystem: "windows"
 
       await runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
     } catch (err) {
-      logMessage(deployFolderName, "error", `Error handling deploy script: ${err}`);
-      return;
+      throw err;
     }
   }
 };
