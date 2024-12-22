@@ -39,6 +39,7 @@ socket.on(`deploy-version-${token}`, async (data) => {
 });
 
 socket.on(`pending-deployments-${token}`, async (data) => {
+  console.log("pending-deployments", data);
   const queueIndex = queue.findIndex((item) => item.application.id === data.application.id && item.project.id === data.project.id && item.environment.id === data.environment.id && item.version.id === data.version.id);
   if (queueIndex > -1) {
     return
@@ -82,6 +83,7 @@ socket.on(`inprogress-deployments-${token}`, async (data) => {
 });
 
 async function processQueue() {
+  console.log("processQueue", queue);
   if (queue.length === 0) {
     isProcessing = false;
     processingItem = null;
@@ -91,6 +93,7 @@ async function processQueue() {
   isProcessing = true;
   const data = queue.shift();
 
+  console.log("processing", data);
   processingItem = data;
   try {
     socket.emit(`version-status`, {
