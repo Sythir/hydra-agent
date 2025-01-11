@@ -10,7 +10,7 @@ import util from 'util';
 
 const execAsync = util.promisify(exec);
 
-async function runDeployScript(deployScript: string, deployFolderName: string) {
+async function runDeployScript(deployScript: string, deployFolderName: string): Promise<string> {
   const timeout = Number(process.env.DEPLOY_TIMEOUT_IN_SECONDS || 10) * 1000;
 
   logMessage(deployFolderName, "info", `Starting deploy script execution`);
@@ -32,7 +32,7 @@ async function runDeployScript(deployScript: string, deployFolderName: string) {
       logMessage(deployFolderName, "info", `Deploy script completed successfully`);
     }
 
-    return stdout;
+    return stdout.toString();
   } catch (error: any) {
     if (scriptExecution.child) {
       scriptExecution.child.kill('SIGTERM'); // Terminate the script if still running
@@ -55,14 +55,14 @@ export const handleDeployMessage = async (data: Data, operatingSystem: "windows"
   const deployFolderName = `${data.project.code}-${data.application.code}-${data.environment.name}-${data.version.version}-${uniqueHash}`;
   const deployFolderLocation = `${folderLocation}/${deployFolderName}`;
   if (!createDirectoryIfNotExists(deployFolderLocation)) return;
-
+  let deployScriptOutput: string;
   if (operatingSystem === "windows") {
     try {
       const scriptPath = `${deployFolderLocation}/deploy-script.ps1`;
       fs.writeFileSync(scriptPath, script);
       logMessage(deployFolderName, "info", `Deploy script written to ${scriptPath}`);
 
-      await runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
+      deployScriptOutput = await runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
     } catch (err) {
       logMessage(deployFolderName, "error", `Error handling deploy script: ${err}`);
       throw err;
@@ -72,9 +72,11 @@ export const handleDeployMessage = async (data: Data, operatingSystem: "windows"
       fs.writeFileSync(`${deployFolderLocation}/deploy-script.sh`, script);
       logMessage(deployFolderName, "info", `Deploy script written to ${deployFolderLocation}/deploy-script.sh`);
 
-      await runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
+      deployScriptOutput = await runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
     } catch (err) {
       throw err;
     }
+
+    return deployScriptOutput;
   }
 };

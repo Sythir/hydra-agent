@@ -4,7 +4,7 @@ import { handleDeployMessage } from "./handleDeployMessage";
 
 const token = process.env.AGENT_KEY;
 const socket = io(process.env.HOST, {
-  query: { token },
+  query: { token, type: 'agent' },
 });
 const platform = os.platform();
 const operatingSystem = platform === "win32" ? "windows" : "linux";
@@ -26,6 +26,7 @@ let processingItem: any;
 
 socket.on(`deploy-version-${token}`, async (data) => {
   // Add the data to the queue
+  console.log("deploy-version", data);
   queue.push(data);
   socket.emit(`version-status`, {
     status: "pending",
@@ -39,8 +40,8 @@ socket.on(`deploy-version-${token}`, async (data) => {
 });
 
 socket.on(`pending-deployments-${token}`, async (data) => {
-  console.log("pending-deployments", data);
   const queueIndex = queue.findIndex((item) => item.application.id === data.application.id && item.project.id === data.project.id && item.environment.id === data.environment.id && item.version.id === data.version.id);
+  console.log("queueIndex", queueIndex);
   if (queueIndex > -1) {
     return
   }
@@ -83,7 +84,6 @@ socket.on(`inprogress-deployments-${token}`, async (data) => {
 });
 
 async function processQueue() {
-  console.log("processQueue", queue);
   if (queue.length === 0) {
     isProcessing = false;
     processingItem = null;
@@ -103,13 +103,14 @@ async function processQueue() {
       envId: data.environment.id,
     });
 
-    await handleDeployMessage(data, operatingSystem);
+    const deployScriptOutput = await handleDeployMessage(data, operatingSystem);
 
     socket.emit(`version-status`, {
       status: "success",
       appCode: data.application.code,
       projectCode: data.project.code,
       envId: data.environment.id,
+      output: deployScriptOutput,
     });
 
     processQueue();
