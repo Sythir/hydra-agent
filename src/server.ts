@@ -114,12 +114,13 @@ async function processQueue() {
     });
 
     processQueue();
-  } catch (error) {
+  } catch (error: any) {
     socket.emit(`version-status`, {
       status: "error",
       appCode: data.application.code,
       projectCode: data.project.code,
       envId: data.environment.id,
+      output: error.message,
     });
 
     processQueue();
