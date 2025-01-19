@@ -26,12 +26,23 @@ docker-build-job:
   variables:
     DOCKER_DRIVER: overlay2
   script:
-    - pnpm run build:pkg
     - docker login -u "$DOCKERHUB_USERNAME" -p "$DOCKERHUB_PASSWORD"
     - docker build -t $DOCKERHUB_USERNAME/agent:${CI_COMMIT_TAG} .
     - docker push $DOCKERHUB_USERNAME/agent:${CI_COMMIT_TAG}
+  rules:
+    - if: '$CI_COMMIT_TAG'   # Run only when a tag is pushed
+packages-job:
+  stage: release
+  image: node:22
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@latest-9 --activate
+    - pnpm config set store-dir .pnpm-store
+  script:
+    - pnpm i
+    - pnpm run build:pkg
   artifacts:
     paths:
-      - bin/
+      - bin
   rules:
     - if: '$CI_COMMIT_TAG'   # Run only when a tag is pushed
