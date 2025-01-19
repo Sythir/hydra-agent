@@ -1,0 +1,31 @@
+stages:
+  - build
+  - test
+  - release
+  - deploy
+
+# Default image for most jobs
+image: node:22
+
+build-job:
+  stage: build
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@latest-9 --activate
+    - pnpm config set store-dir .pnpm-store
+  script:
+    - pnpm i
+    - pnpm run build
+
+docker-build-job:
+  stage: release
+  image: docker:24.0.6
+  services:
+    - name: docker:24.0.6-dind
+      command: ['--privileged']
+  variables:
+    DOCKER_DRIVER: overlay2
+  script:
+    - docker login -u "$DOCKERHUB_USERNAME" -p "$DOCKERHUB_PASSWORD"
+    - docker build -t $DOCKERHUB_USERNAME/agent:$CI_COMMIT_SHORT_SHA .
+    - docker push $DOCKERHUB_USERNAME/agent:$CI_COMMIT_SHORT_SHA
