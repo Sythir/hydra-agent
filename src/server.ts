@@ -3,7 +3,13 @@ import os from "os";
 import { handleDeployMessage } from "./handleDeployMessage";
 
 const token = process.env.AGENT_KEY;
-const socket = io(process.env.HOST, {
+
+if (!token) {
+  throw new Error('AGENT_KEY is not set');
+}
+
+const host = process.env.HOST || 'https://kvdels.nl/api/deployment-gateway';
+const socket = io(host, {
   query: { token, type: 'agent' },
 });
 const platform = os.platform();
@@ -18,7 +24,6 @@ socket.on("connect", () => {
 socket.on("disconnect", () => {
   console.log("Disconnected from the server");
 });
-
 
 const queue: any[] = [];
 let isProcessing = false;
