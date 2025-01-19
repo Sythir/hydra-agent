@@ -2,16 +2,22 @@ import io from "socket.io-client";
 import os from "os";
 import { handleDeployMessage } from "./handleDeployMessage";
 
-const token = process.env.AGENT_KEY;
+const args = process.argv.slice(2); // Get arguments after the script name
+const tokenIndex = args.indexOf('--agent-key');
+
+const token = process.env.AGENT_KEY || args[tokenIndex + 1];
+
 
 if (!token) {
-  throw new Error('AGENT_KEY is not set');
+  throw new Error('Agent key is not set. Use the AGENT_KEY environment variable or pass it as an argument(e.g. --agent-key <agent-key>)');
 }
-
+console.log('token', token);
 const host = process.env.HOST || 'https://kvdels.nl/api/deployment-gateway';
+
 const socket = io(host, {
   query: { token, type: 'agent' },
 });
+
 const platform = os.platform();
 const operatingSystem = platform === "win32" ? "windows" : "linux";
 

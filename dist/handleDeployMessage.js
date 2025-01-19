@@ -41,7 +41,7 @@ function runDeployScript(deployScript, deployFolderName) {
                 (0, logMessage_1.logMessage)(deployFolderName, "info", "Output deploy script: " + stdout.toString());
                 (0, logMessage_1.logMessage)(deployFolderName, "info", `Deploy script completed successfully`);
             }
-            return stdout;
+            return stdout.toString();
         }
         catch (error) {
             if (scriptExecution.child) {
@@ -56,6 +56,7 @@ const handleDeployMessage = (data, operatingSystem) => __awaiter(void 0, void 0,
     const { script } = data;
     if (!script)
         return;
+    const updatedScript = script.replace('$VERSION', data.version.version).replace('$PACKAGENAME', data.application.appId).replace('$PROJECTNAME', data.project.name);
     const homeDir = os_1.default.homedir();
     const folderLocation = path_1.default.join(homeDir, process.env.DEPLOY_LOGS_DIRECTORY || '', 'HydraDeploys');
     if (!(0, createDirectoryIfNotExists_1.createDirectoryIfNotExists)(folderLocation))
@@ -65,12 +66,13 @@ const handleDeployMessage = (data, operatingSystem) => __awaiter(void 0, void 0,
     const deployFolderLocation = `${folderLocation}/${deployFolderName}`;
     if (!(0, createDirectoryIfNotExists_1.createDirectoryIfNotExists)(deployFolderLocation))
         return;
+    let deployScriptOutput;
     if (operatingSystem === "windows") {
         try {
             const scriptPath = `${deployFolderLocation}/deploy-script.ps1`;
-            fs_1.default.writeFileSync(scriptPath, script);
+            fs_1.default.writeFileSync(scriptPath, updatedScript);
             (0, logMessage_1.logMessage)(deployFolderName, "info", `Deploy script written to ${scriptPath}`);
-            yield runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
+            deployScriptOutput = yield runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
         }
         catch (err) {
             (0, logMessage_1.logMessage)(deployFolderName, "error", `Error handling deploy script: ${err}`);
@@ -79,13 +81,14 @@ const handleDeployMessage = (data, operatingSystem) => __awaiter(void 0, void 0,
     }
     else {
         try {
-            fs_1.default.writeFileSync(`${deployFolderLocation}/deploy-script.sh`, script);
+            fs_1.default.writeFileSync(`${deployFolderLocation}/deploy-script.sh`, updatedScript);
             (0, logMessage_1.logMessage)(deployFolderName, "info", `Deploy script written to ${deployFolderLocation}/deploy-script.sh`);
-            yield runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
+            deployScriptOutput = yield runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
         }
         catch (err) {
             throw err;
         }
+        return deployScriptOutput;
     }
 });
 exports.handleDeployMessage = handleDeployMessage;

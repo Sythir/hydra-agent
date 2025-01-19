@@ -15,9 +15,16 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const socket_io_client_1 = __importDefault(require("socket.io-client"));
 const os_1 = __importDefault(require("os"));
 const handleDeployMessage_1 = require("./handleDeployMessage");
-const token = process.env.AGENT_KEY;
-const socket = (0, socket_io_client_1.default)(process.env.HOST, {
-    query: { token },
+const args = process.argv.slice(2); // Get arguments after the script name
+const tokenIndex = args.indexOf('--agent-key');
+const token = process.env.AGENT_KEY || args[tokenIndex + 1];
+if (!token) {
+    throw new Error('Agent key is not set. Use the AGENT_KEY environment variable or pass it as an argument(e.g. --agent-key <agent-key>)');
+}
+console.log('token', token);
+const host = process.env.HOST || 'https://kvdels.nl/api/deployment-gateway';
+const socket = (0, socket_io_client_1.default)(host, {
+    query: { token, type: 'agent' },
 });
 const platform = os_1.default.platform();
 const operatingSystem = platform === "win32" ? "windows" : "linux";
@@ -31,8 +38,10 @@ socket.on("disconnect", () => {
 });
 const queue = [];
 let isProcessing = false;
+let processingItem;
 socket.on(`deploy-version-${token}`, (data) => __awaiter(void 0, void 0, void 0, function* () {
     // Add the data to the queue
+    console.log("deploy-version", data);
     queue.push(data);
     socket.emit(`version-status`, {
         status: "pending",
@@ -44,14 +53,55 @@ socket.on(`deploy-version-${token}`, (data) => __awaiter(void 0, void 0, void 0,
         processQueue();
     }
 }));
+socket.on(`pending-deployments-${token}`, (data) => __awaiter(void 0, void 0, void 0, function* () {
+    const queueIndex = queue.findIndex((item) => item.application.id === data.application.id && item.project.id === data.project.id && item.environment.id === data.environment.id && item.version.id === data.version.id);
+    console.log("queueIndex", queueIndex);
+    if (queueIndex > -1) {
+        return;
+    }
+    queue.push(data);
+    socket.emit(`version-status`, {
+        status: "pending",
+        appCode: data.application.code,
+        projectCode: data.project.code,
+        envId: data.environment.id,
+    });
+    if (!isProcessing) {
+        processQueue();
+    }
+}));
+socket.on(`inprogress-deployments-${token}`, (data) => __awaiter(void 0, void 0, void 0, function* () {
+    const { application, project, environment, version } = data;
+    if (!processingItem) {
+        socket.emit(`version-status`, {
+            status: "error",
+            appCode: application.code,
+            projectCode: project.code,
+            envId: environment.id,
+        });
+        return;
+    }
+    if (application.id === processingItem.application.id && project.id === processingItem.project.id && environment.id === processingItem.environment.id && version.id === processingItem.version.id) {
+        return;
+    }
+    socket.emit(`version-status`, {
+        status: "error",
+        appCode: data.application.code,
+        projectCode: data.project.code,
+        envId: data.environment.id,
+    });
+}));
 function processQueue() {
     return __awaiter(this, void 0, void 0, function* () {
         if (queue.length === 0) {
             isProcessing = false;
+            processingItem = null;
             return;
         }
         isProcessing = true;
         const data = queue.shift();
+        console.log("processing", data);
+        processingItem = data;
         try {
             socket.emit(`version-status`, {
                 status: "in-progress",
@@ -59,12 +109,13 @@ function processQueue() {
                 projectCode: data.project.code,
                 envId: data.environment.id,
             });
-            yield (0, handleDeployMessage_1.handleDeployMessage)(data, operatingSystem);
+            const deployScriptOutput = yield (0, handleDeployMessage_1.handleDeployMessage)(data, operatingSystem);
             socket.emit(`version-status`, {
                 status: "success",
                 appCode: data.application.code,
                 projectCode: data.project.code,
                 envId: data.environment.id,
+                output: deployScriptOutput,
             });
             processQueue();
         }
@@ -74,6 +125,7 @@ function processQueue() {
                 appCode: data.application.code,
                 projectCode: data.project.code,
                 envId: data.environment.id,
+                output: error.message,
             });
             processQueue();
         }
