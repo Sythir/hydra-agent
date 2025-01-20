@@ -1,13 +1,4 @@
 "use strict";
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -39,7 +30,7 @@ socket.on("disconnect", () => {
 const queue = [];
 let isProcessing = false;
 let processingItem;
-socket.on(`deploy-version-${token}`, (data) => __awaiter(void 0, void 0, void 0, function* () {
+socket.on(`deploy-version-${token}`, async (data) => {
     // Add the data to the queue
     console.log("deploy-version", data);
     queue.push(data);
@@ -52,8 +43,8 @@ socket.on(`deploy-version-${token}`, (data) => __awaiter(void 0, void 0, void 0,
     if (!isProcessing) {
         processQueue();
     }
-}));
-socket.on(`pending-deployments-${token}`, (data) => __awaiter(void 0, void 0, void 0, function* () {
+});
+socket.on(`pending-deployments-${token}`, async (data) => {
     const queueIndex = queue.findIndex((item) => item.application.id === data.application.id && item.project.id === data.project.id && item.environment.id === data.environment.id && item.version.id === data.version.id);
     console.log("queueIndex", queueIndex);
     if (queueIndex > -1) {
@@ -69,8 +60,8 @@ socket.on(`pending-deployments-${token}`, (data) => __awaiter(void 0, void 0, vo
     if (!isProcessing) {
         processQueue();
     }
-}));
-socket.on(`inprogress-deployments-${token}`, (data) => __awaiter(void 0, void 0, void 0, function* () {
+});
+socket.on(`inprogress-deployments-${token}`, async (data) => {
     const { application, project, environment, version } = data;
     if (!processingItem) {
         socket.emit(`version-status`, {
@@ -90,44 +81,41 @@ socket.on(`inprogress-deployments-${token}`, (data) => __awaiter(void 0, void 0,
         projectCode: data.project.code,
         envId: data.environment.id,
     });
-}));
-function processQueue() {
-    return __awaiter(this, void 0, void 0, function* () {
-        if (queue.length === 0) {
-            isProcessing = false;
-            processingItem = null;
-            return;
-        }
-        isProcessing = true;
-        const data = queue.shift();
-        console.log("processing", data);
-        processingItem = data;
-        try {
-            socket.emit(`version-status`, {
-                status: "in-progress",
-                appCode: data.application.code,
-                projectCode: data.project.code,
-                envId: data.environment.id,
-            });
-            const deployScriptOutput = yield (0, handleDeployMessage_1.handleDeployMessage)(data, operatingSystem);
-            socket.emit(`version-status`, {
-                status: "success",
-                appCode: data.application.code,
-                projectCode: data.project.code,
-                envId: data.environment.id,
-                output: deployScriptOutput,
-            });
-            processQueue();
-        }
-        catch (error) {
-            socket.emit(`version-status`, {
-                status: "error",
-                appCode: data.application.code,
-                projectCode: data.project.code,
-                envId: data.environment.id,
-                output: error.message,
-            });
-            processQueue();
-        }
-    });
+});
+async function processQueue() {
+    if (queue.length === 0) {
+        isProcessing = false;
+        processingItem = null;
+        return;
+    }
+    isProcessing = true;
+    const data = queue.shift();
+    processingItem = data;
+    try {
+        socket.emit(`version-status`, {
+            status: "in-progress",
+            appCode: data.application.code,
+            projectCode: data.project.code,
+            envId: data.environment.id,
+        });
+        const deployScriptOutput = await (0, handleDeployMessage_1.handleDeployMessage)(processingItem, operatingSystem);
+        socket.emit(`version-status`, {
+            status: "success",
+            appCode: data.application.code,
+            projectCode: data.project.code,
+            envId: data.environment.id,
+            output: deployScriptOutput,
+        });
+        processQueue();
+    }
+    catch (error) {
+        socket.emit(`version-status`, {
+            status: "error",
+            appCode: data.application.code,
+            projectCode: data.project.code,
+            envId: data.environment.id,
+            output: error.message,
+        });
+        processQueue();
+    }
 }

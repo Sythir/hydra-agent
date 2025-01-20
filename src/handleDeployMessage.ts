@@ -47,7 +47,14 @@ export const handleDeployMessage = async (data: Data, operatingSystem: "windows"
   const { script } = data;
   if (!script) return;
 
-  const updatedScript = script.replace('$VERSION', data.version.version).replace('$PACKAGENAME', data.application.appId).replace('$PROJECTNAME', data.project.name);
+  let updatedScript = script
+    .replaceAll('$VERSION', data.version.version)
+    .replaceAll('$PACKAGENAME', data.application.appId)
+    .replaceAll('$PROJECTNAME', data.project.name);
+
+  data.config.forEach((config) => {
+    updatedScript = updatedScript.replaceAll(`$${config.name}`, config.data);
+  });
 
   const homeDir = os.homedir();
   const folderLocation = path.join(homeDir, process.env.DEPLOY_LOGS_DIRECTORY || '', 'HydraDeploys');

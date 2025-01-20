@@ -24,6 +24,7 @@ interface Version {
 interface Config {
   type: string;
   data: string;
+  name: string;
 }
 
 
@@ -33,5 +34,5 @@ export interface Data {
   project: Project;
   version: Version;
   environment: Environment;
-  config: Config;
+  config: Config[];
 }

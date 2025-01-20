@@ -104,7 +104,6 @@ async function processQueue() {
   isProcessing = true;
   const data = queue.shift();
 
-  console.log("processing", data);
   processingItem = data;
   try {
     socket.emit(`version-status`, {
@@ -114,7 +113,7 @@ async function processQueue() {
       envId: data.environment.id,
     });
 
-    const deployScriptOutput = await handleDeployMessage(data, operatingSystem);
+    const deployScriptOutput = await handleDeployMessage(processingItem, operatingSystem);
 
     socket.emit(`version-status`, {
       status: "success",
