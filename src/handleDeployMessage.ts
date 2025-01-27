@@ -47,15 +47,6 @@ export const handleDeployMessage = async (data: Data, operatingSystem: "windows"
   const { script } = data;
   if (!script) return;
 
-  let updatedScript = script
-    .replaceAll('$VERSION', data.version.version)
-    .replaceAll('$PACKAGENAME', data.application.appId)
-    .replaceAll('$PROJECTNAME', data.project.name);
-
-  data.config.forEach((config) => {
-    updatedScript = updatedScript.replaceAll(`$${config.name}`, config.data);
-  });
-
   const homeDir = os.homedir();
   const folderLocation = path.join(homeDir, process.env.DEPLOY_LOGS_DIRECTORY || '', 'HydraDeploys');
   if (!createDirectoryIfNotExists(folderLocation)) return;
@@ -68,7 +59,7 @@ export const handleDeployMessage = async (data: Data, operatingSystem: "windows"
   if (operatingSystem === "windows") {
     try {
       const scriptPath = `${deployFolderLocation}/deploy-script.ps1`;
-      fs.writeFileSync(scriptPath, updatedScript);
+      fs.writeFileSync(scriptPath, script);
       logMessage(deployFolderName, "info", `Deploy script written to ${scriptPath}`);
 
       deployScriptOutput = await runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
@@ -78,7 +69,7 @@ export const handleDeployMessage = async (data: Data, operatingSystem: "windows"
     }
   } else {
     try {
-      fs.writeFileSync(`${deployFolderLocation}/deploy-script.sh`, updatedScript);
+      fs.writeFileSync(`${deployFolderLocation}/deploy-script.sh`, script);
       logMessage(deployFolderName, "info", `Deploy script written to ${deployFolderLocation}/deploy-script.sh`);
 
       deployScriptOutput = await runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
