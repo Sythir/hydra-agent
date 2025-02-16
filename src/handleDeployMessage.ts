@@ -1,19 +1,21 @@
-import fs from 'fs'
+import fs from 'fs';
 import { Data } from './types/data';
 import { createDeployHash } from './utils/createDeployHash';
 import os from 'os';
 import path from 'path';
 import { logMessage } from './utils/logMessage';
-import { exec } from 'child_process';
+import { exec, execSync } from 'child_process';
 import { createDirectoryIfNotExists } from './utils/createDirectoryIfNotExists';
 import util from 'util';
+import { ensureDirectoryExists } from './utils/ensureDirectoryExists';
+import { cleanupOldDeployments } from './utils/CleanupOldDeployments';
 
 const execAsync = util.promisify(exec);
 
 async function runDeployScript(deployScript: string, deployFolderName: string): Promise<string> {
   const timeout = Number(process.env.DEPLOY_TIMEOUT_IN_SECONDS || 10) * 1000;
 
-  logMessage(deployFolderName, "info", `Starting deploy script execution`);
+  logMessage(deployFolderName, 'info', `Starting deploy script execution`);
   const scriptExecution = execAsync(deployScript, { encoding: 'utf8' });
 
   const timeoutPromise = new Promise((_, reject) => {
@@ -23,13 +25,13 @@ async function runDeployScript(deployScript: string, deployFolderName: string): 
   });
 
   try {
-    const { stdout, stderr } = await Promise.race([scriptExecution, timeoutPromise]) as any;
+    const { stdout, stderr } = (await Promise.race([scriptExecution, timeoutPromise])) as any;
 
     if (stderr) {
       throw new Error(`Error executing deploy script: ${stderr}`);
     } else {
-      logMessage(deployFolderName, "info", "Output deploy script: " + stdout.toString());
-      logMessage(deployFolderName, "info", `Deploy script completed successfully`);
+      logMessage(deployFolderName, 'info', 'Output deploy script: ' + stdout.toString());
+      logMessage(deployFolderName, 'info', `Deploy script completed successfully`);
     }
 
     return stdout.toString();
@@ -37,13 +39,16 @@ async function runDeployScript(deployScript: string, deployFolderName: string): 
     if (scriptExecution.child) {
       scriptExecution.child.kill('SIGTERM'); // Terminate the script if still running
     }
-    logMessage(deployFolderName, "error", `Deploy execution failed: ${error.message}, if this timeout is too short, you can increase it in the env variables`);
+    logMessage(
+      deployFolderName,
+      'error',
+      `Deploy execution failed: ${error.message}, if this timeout is too short, you can increase it in the env variables`,
+    );
     throw error;
   }
 }
 
-
-export const handleDeployMessage = async (data: Data, operatingSystem: "windows" | "linux") => {
+export const handleDeployMessage = async (data: Data, operatingSystem: 'windows' | 'linux', keepDeployments: number) => {
   const { script } = data;
   if (!script) return;
 
@@ -52,31 +57,35 @@ export const handleDeployMessage = async (data: Data, operatingSystem: "windows"
   if (!createDirectoryIfNotExists(folderLocation)) return;
 
   const uniqueHash = createDeployHash();
-  const deployFolderName = `${data.project.code}-${data.application.code}-${data.environment.name}-${data.version.version}-${uniqueHash}`;
+  ensureDirectoryExists(
+    `${folderLocation}/${data.project.code}/${data.application.code}/${data.environment.name}/${data.version.version}-${uniqueHash}`,
+  );
+  const deployFolderName = `${folderLocation}/${data.project.code}/${data.application.code}/${data.environment.name}/${data.version.version}-${uniqueHash}`;
   const deployFolderLocation = `${folderLocation}/${deployFolderName}`;
   if (!createDirectoryIfNotExists(deployFolderLocation)) return;
   let deployScriptOutput: string;
-  if (operatingSystem === "windows") {
+  if (operatingSystem === 'windows') {
     try {
       const scriptPath = `${deployFolderLocation}/deploy-script.ps1`;
       fs.writeFileSync(scriptPath, script);
-      logMessage(deployFolderName, "info", `Deploy script written to ${scriptPath}`);
+      logMessage(deployFolderName, 'info', `Deploy script written to ${scriptPath}`);
 
       deployScriptOutput = await runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
     } catch (err) {
-      logMessage(deployFolderName, "error", `Error handling deploy script: ${err}`);
+      logMessage(deployFolderName, 'error', `Error handling deploy script: ${err}`);
       throw err;
     }
   } else {
     try {
       fs.writeFileSync(`${deployFolderLocation}/deploy-script.sh`, script);
-      logMessage(deployFolderName, "info", `Deploy script written to ${deployFolderLocation}/deploy-script.sh`);
+      execSync(`chmod +x ${deployFolderLocation}/deploy-script.sh`);
+      logMessage(deployFolderName, 'info', `Deploy script written to ${deployFolderLocation}/deploy-script.sh`);
 
       deployScriptOutput = await runDeployScript(`sh ${deployFolderLocation}/deploy-script.sh`, deployFolderName);
     } catch (err) {
       throw err;
     }
-
+    await cleanupOldDeployments(deployFolderName, data.project.code, data.application.code, data.environment.name, keepDeployments);
     return deployScriptOutput;
   }
 };

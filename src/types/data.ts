@@ -27,7 +27,6 @@ interface Config {
   name: string;
 }
 
-
 export interface Data {
   script: string;
   rawScript: string;
