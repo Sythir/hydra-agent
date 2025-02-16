@@ -12,7 +12,7 @@ if (!token) {
   throw new Error('Agent key is not set. Use the AGENT_KEY environment variable or pass it as an argument(e.g. --agent-key <agent-key>)');
 }
 console.log('token', token);
-const host = process.env.HOST || 'https://kvdels.nl/api/deployment-gateway';
+const host = process.env.HOST || 'https://hydra.syther.com/api/deployment-gateway';
 
 const socket = io(host, {
   query: { token, type: 'agent' },
