@@ -13,7 +13,7 @@ import { cleanupOldDeployments } from './utils/CleanupOldDeployments';
 const execAsync = util.promisify(exec);
 
 async function runDeployScript(deployScript: string, deployFolderName: string): Promise<string> {
-  const timeout = Number(process.env.DEPLOY_TIMEOUT_IN_SECONDS || 10) * 1000;
+  const timeout = Number(process.env.DEPLOY_TIMEOUT_IN_SECONDS || 60) * 1000;
 
   logMessage(deployFolderName, 'info', `Starting deploy script execution`);
   const scriptExecution = execAsync(deployScript, { encoding: 'utf8' });
