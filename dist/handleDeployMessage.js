@@ -1,5 +1,5 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
+var __importDefault = (this && this.__importDefault) || function(mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -14,7 +14,7 @@ const createDirectoryIfNotExists_1 = require("./utils/createDirectoryIfNotExists
 const util_1 = __importDefault(require("util"));
 const execAsync = util_1.default.promisify(child_process_1.exec);
 async function runDeployScript(deployScript, deployFolderName) {
-    const timeout = Number(process.env.DEPLOY_TIMEOUT_IN_SECONDS || 10) * 1000;
+    const timeout = Number(process.env.DEPLOY_TIMEOUT_IN_SECONDS || 60) * 1000;
     (0, logMessage_1.logMessage)(deployFolderName, "info", `Starting deploy script execution`);
     const scriptExecution = execAsync(deployScript, { encoding: 'utf8' });
     const timeoutPromise = new Promise((_, reject) => {

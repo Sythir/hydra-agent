@@ -15,7 +15,7 @@ const execAsync = util.promisify(exec);
 
 async function runDeployScript(deployScript: string, deployFolderName: string): Promise<ExecutionResultReturnType> {
   let output = '';
-  const timeout = Number(process.env.DEPLOY_TIMEOUT_IN_SECONDS || 10) * 1000;
+  const timeout = Number(process.env.DEPLOY_TIMEOUT_IN_SECONDS || 60) * 1000;
 
   output += logMessage(deployFolderName, 'info', `Starting deploy script execution`);
   const scriptExecution = execAsync(deployScript, { encoding: 'utf8' });
