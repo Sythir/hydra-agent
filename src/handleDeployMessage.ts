@@ -39,7 +39,6 @@ async function runDeployScript(deployScript: string, deployFolderName: string): 
     }
 
     if (error.code !== 0) {
-      console.log('kokoko koen');
       output += logMessage(deployFolderName, 'info', 'Output deploy script: ' + error.stdout.toString());
       output += logMessage(deployFolderName, 'error', `Deploy script exited with code ${error.code}: ${error.stderr.toString()}`);
       return { succeeded: false, output: output };

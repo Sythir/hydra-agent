@@ -27,7 +27,6 @@ export const logMessage = (folderName: string, type: 'info' | 'warning' | 'error
 
   // Append the log message to the file
   fs.appendFileSync(logFilePath, logEntry, 'utf8');
-  console.log(logEntry);
 
   return logEntry;
 };

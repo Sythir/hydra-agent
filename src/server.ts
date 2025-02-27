@@ -52,7 +52,6 @@ let processingItem: any;
 
 socket.on(`deploy-version-${token}`, async (data) => {
   // Add the data to the queue
-  console.log('deploy-version', data);
   queue.push(data);
   socket.emit(`version-status`, {
     status: 'pending',
@@ -137,7 +136,7 @@ async function processQueue() {
     });
 
     const deployScriptOutput = await handleDeployMessage(processingItem, operatingSystem, keepDeployments);
-  console.log(deployScriptOutput);
+
     socket.emit(`version-status`, {
       status: deployScriptOutput.succeeded ? 'success' : 'error',
       appCode: data.application.code,
