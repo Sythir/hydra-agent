@@ -25,7 +25,7 @@ if (keepDeploymentsIndex !== -1) {
   }
 }
 
-console.log(`Agent Key: ${token.slice(0, 5)}... (partially shown)`); // Masking the token for security.
+console.log(`Agent Key: ${token.slice(0, 5)}... (partially shown)`);
 console.log(`Keep Deployments: ${keepDeployments}`);
 const host = process.env.HOST || 'https://hydra.sythir.com/api/deployment-gateway';
 
@@ -73,7 +73,7 @@ socket.on(`pending-deployments-${token}`, async (data) => {
       item.environment.id === data.environment.id &&
       item.version.id === data.version.id,
   );
-  console.log('queueIndex', queueIndex);
+
   if (queueIndex > -1) {
     return;
   }
@@ -137,13 +137,13 @@ async function processQueue() {
     });
 
     const deployScriptOutput = await handleDeployMessage(processingItem, operatingSystem, keepDeployments);
-
+  console.log(deployScriptOutput);
     socket.emit(`version-status`, {
-      status: 'success',
+      status: deployScriptOutput.succeeded ? 'success' : 'error',
       appCode: data.application.code,
       projectCode: data.project.code,
       envId: data.environment.id,
-      output: deployScriptOutput,
+      output: deployScriptOutput.output,
     });
 
     processQueue();

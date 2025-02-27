@@ -1,18 +1,17 @@
 import fs from 'fs';
 import { logMessage } from './logMessage';
+import {ExecutionResultReturnType} from "../types/ExecutionResultReturnType";
 
-export const createDirectoryIfNotExists = (directory: string) => {
+export const createDirectoryIfNotExists = (directory: string): ExecutionResultReturnType => {
   if (!fs.existsSync(directory)) {
     try {
       fs.mkdirSync(directory, { recursive: true });
-      logMessage('_logs', 'info', `Created directory: ${directory}`);
-      return true;
+      return { output: logMessage('_logs', 'info', `Created directory: ${directory}`), succeeded: true };
     } catch (err) {
-      logMessage('_logs', 'error', `Error creating directory: ${err}`);
-      return false;
+      return { output: logMessage('_logs', 'error', `Error creating directory: ${err}`), succeeded: false };
     }
   }
 
   logMessage('_logs', 'info', `Directory already exists: ${directory}`);
-  return true;
+  return { output: logMessage('_logs', 'info', `Directory already exists: ${directory}`), succeeded: true };
 };
