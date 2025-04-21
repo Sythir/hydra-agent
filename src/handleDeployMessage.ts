@@ -29,7 +29,7 @@ async function runDeployScript(deployScript: string, deployFolderName: string): 
   try {
     const result = (await Promise.race([scriptExecution, timeoutPromise])) as Awaited<ReturnType<typeof execAsync>>;
 
-    output += logMessage(deployFolderName, 'info', 'Output deploy script: ' + result.stdout.toString());
+    output += logMessage(deployFolderName, 'info', 'Output deploy script:\n' + result.stdout.toString());
 
     output += logMessage(deployFolderName, 'info', `Deploy script completed successfully`);
     return { succeeded: true, output: output };
@@ -39,7 +39,7 @@ async function runDeployScript(deployScript: string, deployFolderName: string): 
     }
 
     if (error.code !== 0) {
-      output += logMessage(deployFolderName, 'info', 'Output deploy script: ' + error.stdout.toString());
+      output += logMessage(deployFolderName, 'info', 'Output deploy script:\n ' + error.stdout.toString());
       output += logMessage(deployFolderName, 'error', `Deploy script exited with code ${error.code}: ${error.stderr.toString()}`);
       return { succeeded: false, output: output };
     }

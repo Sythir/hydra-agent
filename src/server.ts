@@ -46,75 +46,83 @@ socket.on('disconnect', () => {
   console.log('Disconnected from the server');
 });
 
-const queue: any[] = [];
+const queue: AgentDeployMessageDto[] = [];
 let isProcessing = false;
 let processingItem: any;
 
-socket.on(`deploy-version-${token}`, async (data) => {
+export interface AgentDeployMessageDto {
+  deployment: { id: string };
+  script: string;
+  application: { id: string; name: string; code: string; appId: string };
+  project: { id: string; name: string; code: string };
+  environment: { id: string; name: string };
+  version: { id: string; version: string };
+  config: { type: string; data: string; name: string }[];
+}
+
+socket.on(`deploy-version-${token}`, async (data: AgentDeployMessageDto) => {
   // Add the data to the queue
   queue.push(data);
   socket.emit(`version-status`, {
     status: 'pending',
-    appCode: data.application.code,
-    projectCode: data.project.code,
-    envId: data.environment.id,
+    deploymentId: data.deployment.id,
   });
   if (!isProcessing) {
     processQueue();
   }
 });
 
-socket.on(`pending-deployments-${token}`, async (data) => {
-  const queueIndex = queue.findIndex(
-    (item) =>
-      item.application.id === data.application.id &&
-      item.project.id === data.project.id &&
-      item.environment.id === data.environment.id &&
-      item.version.id === data.version.id,
-  );
+// socket.on(`pending-deployments-${token}`, async (data) => {
+//   const queueIndex = queue.findIndex(
+//     (item) =>
+//       item.application.id === data.application.id &&
+//       item.project.id === data.project.id &&
+//       item.environment.id === data.environment.id &&
+//       item.version.id === data.version.id,
+//   );
+//
+//   if (queueIndex > -1) {
+//     return;
+//   }
+//   queue.push(data);
+//   socket.emit(`version-status`, {
+//     status: 'pending',
+//     appCode: data.application.code,
+//     projectCode: data.project.code,
+//     envId: data.environment.id,
+//   });
+//   if (!isProcessing) {
+//     processQueue();
+//   }
+// });
 
-  if (queueIndex > -1) {
-    return;
-  }
-  queue.push(data);
-  socket.emit(`version-status`, {
-    status: 'pending',
-    appCode: data.application.code,
-    projectCode: data.project.code,
-    envId: data.environment.id,
-  });
-  if (!isProcessing) {
-    processQueue();
-  }
-});
-
-socket.on(`inprogress-deployments-${token}`, async (data) => {
-  const { application, project, environment, version } = data;
-  if (!processingItem) {
-    socket.emit(`version-status`, {
-      status: 'error',
-      appCode: application.code,
-      projectCode: project.code,
-      envId: environment.id,
-    });
-    return;
-  }
-  if (
-    application.id === processingItem.application.id &&
-    project.id === processingItem.project.id &&
-    environment.id === processingItem.environment.id &&
-    version.id === processingItem.version.id
-  ) {
-    return;
-  }
-
-  socket.emit(`version-status`, {
-    status: 'error',
-    appCode: data.application.code,
-    projectCode: data.project.code,
-    envId: data.environment.id,
-  });
-});
+// socket.on(`inprogress-deployments-${token}`, async (data: AgentDeployMessageDto) => {
+//   const { application, project, environment, version } = data;
+//   if (!processingItem) {
+//     socket.emit(`version-status`, {
+//       status: 'error',
+//       appCode: application.code,
+//       projectCode: project.code,
+//       envId: environment.id,
+//     });
+//     return;
+//   }
+//   if (
+//     application.id === processingItem.application.id &&
+//     project.id === processingItem.project.id &&
+//     environment.id === processingItem.environment.id &&
+//     version.id === processingItem.version.id
+//   ) {
+//     return;
+//   }
+//
+//   socket.emit(`version-status`, {
+//     status: 'error',
+//     appCode: data.application.code,
+//     projectCode: data.project.code,
+//     envId: data.environment.id,
+//   });
+// });
 
 async function processQueue() {
   if (queue.length === 0) {
@@ -124,24 +132,20 @@ async function processQueue() {
   }
 
   isProcessing = true;
-  const data = queue.shift();
-
+  const data = queue.shift()!;
+  console.log('processing', data);
   processingItem = data;
   try {
     socket.emit(`version-status`, {
       status: 'in-progress',
-      appCode: data.application.code,
-      projectCode: data.project.code,
-      envId: data.environment.id,
+      deploymentId: data.deployment.id,
     });
 
     const deployScriptOutput = await handleDeployMessage(processingItem, operatingSystem, keepDeployments);
 
     socket.emit(`version-status`, {
       status: deployScriptOutput.succeeded ? 'success' : 'error',
-      appCode: data.application.code,
-      projectCode: data.project.code,
-      envId: data.environment.id,
+      deploymentId: data.deployment.id,
       output: deployScriptOutput.output,
     });
 
@@ -149,9 +153,7 @@ async function processQueue() {
   } catch (error: any) {
     socket.emit(`version-status`, {
       status: 'error',
-      appCode: data.application.code,
-      projectCode: data.project.code,
-      envId: data.environment.id,
+      deploymentId: data.deployment.id,
       output: error.message,
     });
 
