@@ -61,6 +61,19 @@ export interface AgentDeployMessageDto {
 }
 
 socket.on(`deploy-version-${token}`, async (data: AgentDeployMessageDto) => {
+
+  const queueIndex = queue.findIndex(
+    (item) =>
+      item.application.id === data.application.id &&
+      item.project.id === data.project.id &&
+      item.environment.id === data.environment.id &&
+      item.version.id === data.version.id,
+  );
+
+  if (queueIndex > -1) {
+    return;
+  }
+
   // Add the data to the queue
   queue.push(data);
   socket.emit(`version-status`, {
@@ -71,30 +84,6 @@ socket.on(`deploy-version-${token}`, async (data: AgentDeployMessageDto) => {
     processQueue();
   }
 });
-
-// socket.on(`pending-deployments-${token}`, async (data) => {
-//   const queueIndex = queue.findIndex(
-//     (item) =>
-//       item.application.id === data.application.id &&
-//       item.project.id === data.project.id &&
-//       item.environment.id === data.environment.id &&
-//       item.version.id === data.version.id,
-//   );
-//
-//   if (queueIndex > -1) {
-//     return;
-//   }
-//   queue.push(data);
-//   socket.emit(`version-status`, {
-//     status: 'pending',
-//     appCode: data.application.code,
-//     projectCode: data.project.code,
-//     envId: data.environment.id,
-//   });
-//   if (!isProcessing) {
-//     processQueue();
-//   }
-// });
 
 // socket.on(`inprogress-deployments-${token}`, async (data: AgentDeployMessageDto) => {
 //   const { application, project, environment, version } = data;
@@ -151,6 +140,7 @@ async function processQueue() {
 
     processQueue();
   } catch (error: any) {
+    console.log(error);
     socket.emit(`version-status`, {
       status: 'error',
       deploymentId: data.deployment.id,
