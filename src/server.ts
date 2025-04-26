@@ -90,9 +90,7 @@ socket.on(`inprogress-deployments-${token}`, async (data: AgentDeployMessageDto)
   if (!processingItem) {
     socket.emit(`version-status`, {
       status: 'error',
-      appCode: application.code,
-      projectCode: project.code,
-      envId: environment.id,
+      deploymentId: data.deployment.id,
     });
     return;
   }
@@ -107,9 +105,7 @@ socket.on(`inprogress-deployments-${token}`, async (data: AgentDeployMessageDto)
 
   socket.emit(`version-status`, {
     status: 'error',
-    appCode: data.application.code,
-    projectCode: data.project.code,
-    envId: data.environment.id,
+    deploymentId: data.deployment.id,
   });
 });
 
