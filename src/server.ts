@@ -46,7 +46,7 @@ socket.on('disconnect', () => {
   console.log('Disconnected from the server');
 });
 
-const queue: AgentDeployMessageDto[] = [];
+const queue: Message[] = [];
 let isProcessing = false;
 let processingItem: any;
 
@@ -60,15 +60,27 @@ export interface AgentDeployMessageDto {
   config: { type: string; data: string; name: string }[];
 }
 
-socket.on(`deploy-version-${token}`, async (data: AgentDeployMessageDto) => {
+interface Step {
+  id: string;
+  name: string;
+  type: string;
+  message: AgentDeployMessageDto | null;
+}
 
+interface Message {
+  id: string;
+  steps: Step[];
+}
+
+socket.on(`deploy-version-${token}`, async (data: Message) => {
+
+  console.log('rorororo new deployment', data.id, queue.length)
   const queueIndex = queue.findIndex(
     (item) =>
-      item.application.id === data.application.id &&
-      item.project.id === data.project.id &&
-      item.environment.id === data.environment.id &&
-      item.version.id === data.version.id,
+      item.id === data.id,
   );
+
+  console.log('roproro', queueIndex, isProcessing)
 
   if (queueIndex > -1) {
     return;
@@ -78,7 +90,7 @@ socket.on(`deploy-version-${token}`, async (data: AgentDeployMessageDto) => {
   queue.push(data);
   socket.emit(`version-status`, {
     status: 'pending',
-    deploymentId: data.deployment.id,
+    deploymentId: data.id,
   });
   if (!isProcessing) {
     processQueue();
@@ -110,6 +122,7 @@ socket.on(`inprogress-deployments-${token}`, async (data: AgentDeployMessageDto)
 });
 
 async function processQueue() {
+  console.log('processQueue', queue)
   if (queue.length === 0) {
     isProcessing = false;
     processingItem = null;
@@ -123,23 +136,38 @@ async function processQueue() {
   try {
     socket.emit(`version-status`, {
       status: 'in-progress',
-      deploymentId: data.deployment.id,
+      deploymentId: data.id,
     });
 
-    const deployScriptOutput = await handleDeployMessage(processingItem, operatingSystem, keepDeployments);
+    const output: any[] = [];
+    for (const step of data.steps) {
+      console.log('processing step', step);
+      if ((step.type === 'script' || step.type === 'derived') && step.message) {
+        const deployScriptOutput = await handleDeployMessage(step.message, operatingSystem, keepDeployments);
+        output.push(deployScriptOutput);
+      } else {
+        console.log('Send server api call to execute step with id ' + step.id)
+      }
+
+    }
+    console.log('output', output)
+    const allSucceeded = output.every((item) => item.succeeded);
+    console.log('allSucceeded', allSucceeded)
+    console.log('rororor data', data)
+    //const deployScriptOutput = await handleDeployMessage(processingItem, operatingSystem, keepDeployments);
 
     socket.emit(`version-status`, {
-      status: deployScriptOutput.succeeded ? 'success' : 'error',
-      deploymentId: data.deployment.id,
-      output: deployScriptOutput.output,
+      status: allSucceeded ? 'success' : 'error',
+      deploymentId: data.id,
+      output: output.map(x => x.output).join('\n'),
     });
 
     processQueue();
   } catch (error: any) {
-    console.log(error);
+    console.log('rororor error', error);
     socket.emit(`version-status`, {
       status: 'error',
-      deploymentId: data.deployment.id,
+      deploymentId: data.id,
       output: error.message,
     });
 
