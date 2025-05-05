@@ -128,6 +128,7 @@ async function processQueue() {
   const data = queue.shift()!;
   processingItem = data;
   try {
+    console.log('version status: in-progress', data)
     socket.emit(`version-status`, {
       status: 'in-progress',
       deploymentId: data.id,
@@ -148,7 +149,7 @@ async function processQueue() {
       }
 
     }
-
+  console.log('sending status', isFailed ? 'error': 'success')
     socket.emit(`version-status`, {
       status: isFailed ? 'error': 'success',
       deploymentId: data.id,
