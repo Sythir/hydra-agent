@@ -29,7 +29,6 @@ interface Config {
 
 export interface Data {
   script: string;
-  rawScript: string;
   application: App;
   project: Project;
   version: Version;

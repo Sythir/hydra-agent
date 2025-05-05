@@ -8,6 +8,9 @@ const args = process.argv.slice(2);
 const tokenIndex = args.indexOf('--agent-key');
 const token = process.env.AGENT_KEY || args[tokenIndex + 1];
 
+const version = process.env.AGENT_VERSION;
+
+
 if (!token) {
   throw new Error(
     'Agent key is not set. Use the AGENT_KEY environment variable or pass it as an argument(e.g. --agent-key <agent-key>)',
@@ -27,6 +30,7 @@ if (keepDeploymentsIndex !== -1) {
 }
 
 console.log(`Agent Key: ${token.slice(0, 5)}... (partially shown)`);
+console.log(`Agent Version: ${version}`);
 console.log(`Keep Deployments: ${keepDeployments}`);
 const host = process.env.HOST || 'https://hydra.sythir.com/api/deployment-gateway';
 
@@ -39,14 +43,14 @@ const operatingSystem = platform === 'win32' ? 'windows' : 'linux';
 
 socket.on('connect', () => {
   console.log('Connected to the Socket.IO server');
-  socket.emit('register-key');
+  socket.emit('register-key', { version });
 });
 
 socket.on('disconnect', () => {
   console.log('Disconnected from the server');
 });
 
-const queue: AgentDeployMessageDto[] = [];
+const queue: Message[] = [];
 let isProcessing = false;
 let processingItem: any;
 
@@ -60,13 +64,22 @@ export interface AgentDeployMessageDto {
   config: { type: string; data: string; name: string }[];
 }
 
-socket.on(`deploy-version-${token}`, async (data: AgentDeployMessageDto) => {
+interface Step {
+  id: string;
+  name: string;
+  type: string;
+  message: AgentDeployMessageDto | null;
+}
+
+interface Message {
+  id: string;
+  steps: Step[];
+}
+
+socket.on(`deploy-version-${token}`, async (data: Message) => {
   const queueIndex = queue.findIndex(
     (item) =>
-      item.application.id === data.application.id &&
-      item.project.id === data.project.id &&
-      item.environment.id === data.environment.id &&
-      item.version.id === data.version.id,
+      item.id === data.id,
   );
 
   if (queueIndex > -1) {
@@ -77,34 +90,30 @@ socket.on(`deploy-version-${token}`, async (data: AgentDeployMessageDto) => {
   queue.push(data);
   socket.emit(`version-status`, {
     status: 'pending',
-    deploymentId: data.deployment.id,
+    deploymentId: data.id,
   });
   if (!isProcessing) {
     processQueue();
   }
 });
 
-socket.on(`inprogress-deployments-${token}`, async (data: AgentDeployMessageDto) => {
-  const { application, project, environment, version } = data;
+socket.on(`inprogress-deployments-${token}`, async (data: string) => {
   if (!processingItem) {
     socket.emit(`version-status`, {
       status: 'error',
-      deploymentId: data.deployment.id,
+      deploymentId: data
     });
     return;
   }
   if (
-    application.id === processingItem.application.id &&
-    project.id === processingItem.project.id &&
-    environment.id === processingItem.environment.id &&
-    version.id === processingItem.version.id
+    processingItem.id === data
   ) {
     return;
   }
 
   socket.emit(`version-status`, {
     status: 'error',
-    deploymentId: data.deployment.id,
+    deploymentId: data,
   });
 });
 
@@ -117,27 +126,39 @@ async function processQueue() {
 
   isProcessing = true;
   const data = queue.shift()!;
-  console.log('processing', data);
   processingItem = data;
   try {
     socket.emit(`version-status`, {
       status: 'in-progress',
-      deploymentId: data.deployment.id,
+      deploymentId: data.id,
     });
-    const logger = createLogger(data.deployment.id, socket);
-    const deployScriptOutput = await handleDeployMessage(processingItem, operatingSystem, keepDeployments, logger);
+
+    const logger = createLogger(data.id, socket);
+    let isFailed = false;
+    for (const step of data.steps) {
+      if ((step.type === 'script' || step.type === 'derived') && step.message) {
+
+        const deployScriptOutput = await handleDeployMessage(step.message, operatingSystem, keepDeployments, logger);
+        if(!deployScriptOutput.succeeded) {
+          isFailed = true;
+          break;
+        }
+      } else {
+        console.log('Send server api call to execute step with id ' + step.id)
+      }
+
+    }
 
     socket.emit(`version-status`, {
-      status: deployScriptOutput.succeeded ? 'success' : 'error',
-      deploymentId: data.deployment.id,
+      status: isFailed ? 'error': 'success',
+      deploymentId: data.id,
     });
 
     processQueue();
   } catch (error: any) {
-    console.log(error);
     socket.emit(`version-status`, {
       status: 'error',
-      deploymentId: data.deployment.id,
+      deploymentId: data.id,
       output: error.message,
     });
 
