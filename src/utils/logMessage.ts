@@ -13,7 +13,6 @@ import os from 'os';
 export const logMessage = (folderName: string, type: 'info' | 'warning' | 'error', message: string): string => {
   const homeDir = os.homedir();
   const folderLocation = path.join(homeDir, process.env.DEPLOY_LOGS_DIRECTORY || '', 'HydraDeploys', folderName);
-console.log(message)
   if (!fs.existsSync(folderLocation)) {
     fs.mkdirSync(folderLocation, { recursive: true });
   }

@@ -9,7 +9,7 @@ const handleDeployMessage_1 = require("./handleDeployMessage");
 const args = process.argv.slice(2);
 const tokenIndex = args.indexOf('--agent-key');
 const token = process.env.AGENT_KEY || args[tokenIndex + 1];
-const version = process.env.PACKAGE_VERSION;
+const version = process.env.AGENT_VERSION;
 if (!token) {
     throw new Error('Agent key is not set. Use the AGENT_KEY environment variable or pass it as an argument(e.g. --agent-key <agent-key>)');
 }
@@ -35,7 +35,7 @@ const platform = os_1.default.platform();
 const operatingSystem = platform === 'win32' ? 'windows' : 'linux';
 socket.on('connect', () => {
     console.log('Connected to the Socket.IO server');
-    socket.emit('register-key');
+    socket.emit('register-key', { version });
 });
 // Handle disconnection
 socket.on('disconnect', () => {

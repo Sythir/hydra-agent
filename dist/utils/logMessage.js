@@ -18,7 +18,6 @@ const os_1 = __importDefault(require("os"));
 const logMessage = (folderName, type, message) => {
     const homeDir = os_1.default.homedir();
     const folderLocation = path_1.default.join(homeDir, process.env.DEPLOY_LOGS_DIRECTORY || '', 'HydraDeploys', folderName);
-    console.log(message);
     if (!fs_1.default.existsSync(folderLocation)) {
         fs_1.default.mkdirSync(folderLocation, { recursive: true });
     }
