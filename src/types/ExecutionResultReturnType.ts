@@ -1,4 +1,4 @@
 export type ExecutionResultReturnType = {
-  output: string;
   succeeded: boolean;
+  output?: string;
 };

@@ -1,32 +1,33 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { Socket } from 'socket.io-client';
 
-/**
- * Logs a message to a logs.txt file in the specified folder.
- * Creates the folder and file if they don't exist.
- *
- * @param {string} folderName - The folder to store the logs.txt file.
- * @param {'info' | 'warning' | 'error'} type - The type of the log message.
- * @param {string} message - The log message to write.
- */
-export const logMessage = (folderName: string, type: 'info' | 'warning' | 'error', message: string): string => {
-  const homeDir = os.homedir();
-  const folderLocation = path.join(homeDir, process.env.DEPLOY_LOGS_DIRECTORY || '', 'HydraDeploys', folderName);
-console.log(message)
-  if (!fs.existsSync(folderLocation)) {
-    fs.mkdirSync(folderLocation, { recursive: true });
-  }
+export type LoggerFunc = (folderName: string, type: 'info' | 'warning' | 'error', message: string) => void;
 
-  // Path to the logs.txt file
-  const logFilePath = path.join(folderLocation, 'logs.txt');
+export const createLogger = (deploymentId: string, socket: Socket) => {
+  return (folderName: string, type: 'info' | 'warning' | 'error', message: string): void => {
+    if(!message) throw new Error('Message is required');
+    const homeDir = os.homedir();
+    const folderLocation = path.join(homeDir, process.env.DEPLOY_LOGS_DIRECTORY || '', 'HydraDeploys', folderName);
+    console.log(message);
+    if (!fs.existsSync(folderLocation)) {
+      fs.mkdirSync(folderLocation, { recursive: true });
+    }
+
+    const logFilePath = path.join(folderLocation, 'logs.txt');
 
   // Format the log message with a timestamp
   const timestamp = new Date().toISOString();
-  const logEntry = `[${timestamp}] [${type.toUpperCase()}] ${message}\n`;
+  const logEntry = `[${timestamp}] [${type.toUpperCase()}] ${message}`;
 
-  // Append the log message to the file
-  fs.appendFileSync(logFilePath, logEntry, 'utf8');
+    fs.appendFileSync(logFilePath, logEntry, 'utf8');
 
-  return logEntry;
+    socket.emit('log', {
+      deploymentId: deploymentId,
+      type: type,
+      timestamp: new Date().toISOString(),
+      log: message,
+    });
+  };
 };

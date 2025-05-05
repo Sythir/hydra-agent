@@ -1,7 +1,7 @@
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
-import { logMessage } from './logMessage';
+import { LoggerFunc } from './logMessage';
 
 export async function cleanupOldDeployments(
   deployFolderName: string,
@@ -9,6 +9,7 @@ export async function cleanupOldDeployments(
   applicationCode: string,
   environmentName: string,
   keepDeployments: number,
+  logger: LoggerFunc
 ) {
   const homeDir = os.homedir();
   const environmentDir = path.join(
@@ -38,6 +39,6 @@ export async function cleanupOldDeployments(
       await fs.promises.rm(oldestDirPath, { recursive: true, force: true });
     }
   } catch (error) {
-    logMessage(deployFolderName, 'error', `Error cleaning up old deployments: ${error}`);
+    logger(deployFolderName, 'error', `Error cleaning up old deployments: ${error}`);
   }
 }

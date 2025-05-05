@@ -1,6 +1,7 @@
 import { io } from 'socket.io-client';
 import os from 'os';
 import { handleDeployMessage } from './handleDeployMessage';
+import { createLogger } from './utils/logMessage';
 
 const args = process.argv.slice(2);
 
@@ -41,7 +42,6 @@ socket.on('connect', () => {
   socket.emit('register-key');
 });
 
-// Handle disconnection
 socket.on('disconnect', () => {
   console.log('Disconnected from the server');
 });
@@ -61,7 +61,6 @@ export interface AgentDeployMessageDto {
 }
 
 socket.on(`deploy-version-${token}`, async (data: AgentDeployMessageDto) => {
-
   const queueIndex = queue.findIndex(
     (item) =>
       item.application.id === data.application.id &&
@@ -125,13 +124,12 @@ async function processQueue() {
       status: 'in-progress',
       deploymentId: data.deployment.id,
     });
-
-    const deployScriptOutput = await handleDeployMessage(processingItem, operatingSystem, keepDeployments);
+    const logger = createLogger(data.deployment.id, socket);
+    const deployScriptOutput = await handleDeployMessage(processingItem, operatingSystem, keepDeployments, logger);
 
     socket.emit(`version-status`, {
       status: deployScriptOutput.succeeded ? 'success' : 'error',
       deploymentId: data.deployment.id,
-      output: deployScriptOutput.output,
     });
 
     processQueue();
