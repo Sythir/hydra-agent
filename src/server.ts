@@ -7,6 +7,9 @@ const args = process.argv.slice(2);
 const tokenIndex = args.indexOf('--agent-key');
 const token = process.env.AGENT_KEY || args[tokenIndex + 1];
 
+const version = process.env.AGENT_VERSION;
+
+
 if (!token) {
   throw new Error(
     'Agent key is not set. Use the AGENT_KEY environment variable or pass it as an argument(e.g. --agent-key <agent-key>)',
@@ -26,6 +29,7 @@ if (keepDeploymentsIndex !== -1) {
 }
 
 console.log(`Agent Key: ${token.slice(0, 5)}... (partially shown)`);
+console.log(`Agent Version: ${version}`);
 console.log(`Keep Deployments: ${keepDeployments}`);
 const host = process.env.HOST || 'https://hydra.sythir.com/api/deployment-gateway';
 
@@ -38,7 +42,7 @@ const operatingSystem = platform === 'win32' ? 'windows' : 'linux';
 
 socket.on('connect', () => {
   console.log('Connected to the Socket.IO server');
-  socket.emit('register-key');
+  socket.emit('register-key', { version });
 });
 
 // Handle disconnection
@@ -73,14 +77,10 @@ interface Message {
 }
 
 socket.on(`deploy-version-${token}`, async (data: Message) => {
-
-  console.log('rorororo new deployment', data.id, queue.length)
   const queueIndex = queue.findIndex(
     (item) =>
       item.id === data.id,
   );
-
-  console.log('roproro', queueIndex, isProcessing)
 
   if (queueIndex > -1) {
     return;
@@ -97,32 +97,27 @@ socket.on(`deploy-version-${token}`, async (data: Message) => {
   }
 });
 
-socket.on(`inprogress-deployments-${token}`, async (data: AgentDeployMessageDto) => {
-  const { application, project, environment, version } = data;
+socket.on(`inprogress-deployments-${token}`, async (data: string) => {
   if (!processingItem) {
     socket.emit(`version-status`, {
       status: 'error',
-      deploymentId: data.deployment.id,
+      deploymentId: data
     });
     return;
   }
   if (
-    application.id === processingItem.application.id &&
-    project.id === processingItem.project.id &&
-    environment.id === processingItem.environment.id &&
-    version.id === processingItem.version.id
+    processingItem.id === data
   ) {
     return;
   }
 
   socket.emit(`version-status`, {
     status: 'error',
-    deploymentId: data.deployment.id,
+    deploymentId: data,
   });
 });
 
 async function processQueue() {
-  console.log('processQueue', queue)
   if (queue.length === 0) {
     isProcessing = false;
     processingItem = null;
@@ -131,7 +126,6 @@ async function processQueue() {
 
   isProcessing = true;
   const data = queue.shift()!;
-  console.log('processing', data);
   processingItem = data;
   try {
     socket.emit(`version-status`, {
@@ -141,7 +135,6 @@ async function processQueue() {
 
     const output: any[] = [];
     for (const step of data.steps) {
-      console.log('processing step', step);
       if ((step.type === 'script' || step.type === 'derived') && step.message) {
         const deployScriptOutput = await handleDeployMessage(step.message, operatingSystem, keepDeployments);
         output.push(deployScriptOutput);
@@ -150,11 +143,7 @@ async function processQueue() {
       }
 
     }
-    console.log('output', output)
     const allSucceeded = output.every((item) => item.succeeded);
-    console.log('allSucceeded', allSucceeded)
-    console.log('rororor data', data)
-    //const deployScriptOutput = await handleDeployMessage(processingItem, operatingSystem, keepDeployments);
 
     socket.emit(`version-status`, {
       status: allSucceeded ? 'success' : 'error',
@@ -164,7 +153,6 @@ async function processQueue() {
 
     processQueue();
   } catch (error: any) {
-    console.log('rororor error', error);
     socket.emit(`version-status`, {
       status: 'error',
       deploymentId: data.id,
