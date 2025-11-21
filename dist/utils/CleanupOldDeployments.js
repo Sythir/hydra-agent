@@ -3,12 +3,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.cleanupOldDeployments = cleanupOldDeployments;
+exports.cleanupOldDeployments = void 0;
 const os_1 = __importDefault(require("os"));
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
-const logMessage_1 = require("./logMessage");
-async function cleanupOldDeployments(deployFolderName, projectCode, applicationCode, environmentName, keepDeployments) {
+async function cleanupOldDeployments(deployFolderName, projectCode, applicationCode, environmentName, keepDeployments, logger) {
     const homeDir = os_1.default.homedir();
     const environmentDir = path_1.default.join(homeDir, process.env.DEPLOY_LOGS_DIRECTORY || '', 'HydraDeploys', projectCode, applicationCode, environmentName);
     try {
@@ -28,6 +27,7 @@ async function cleanupOldDeployments(deployFolderName, projectCode, applicationC
         }
     }
     catch (error) {
-        (0, logMessage_1.logMessage)(deployFolderName, 'error', `Error cleaning up old deployments: ${error}`);
+        logger(deployFolderName, 'error', `Error cleaning up old deployments: ${error}`);
     }
 }
+exports.cleanupOldDeployments = cleanupOldDeployments;

@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.handleDeployMessage = void 0;
+exports.handleDeployment = void 0;
 const fs_1 = __importDefault(require("fs"));
 const createDeployHash_1 = require("./utils/createDeployHash");
 const os_1 = __importDefault(require("os"));
@@ -12,13 +12,15 @@ const child_process_1 = require("child_process");
 const createDirectoryIfNotExists_1 = require("./utils/createDirectoryIfNotExists");
 const ensureDirectoryExists_1 = require("./utils/ensureDirectoryExists");
 const CleanupOldDeployments_1 = require("./utils/CleanupOldDeployments");
+const IISUtils_1 = require("./utils/IISUtils");
 async function runDeployScript(deployScript, deployFolderName, logger) {
     const timeout = Number(process.env.DEPLOY_TIMEOUT_IN_SECONDS || 60) * 1000;
     logger(deployFolderName, 'info', `Starting deploy script execution`);
     return new Promise((resolve) => {
         const childProcess = (0, child_process_1.spawn)(deployScript, {
             shell: true,
-            stdio: ['ignore', 'pipe', 'pipe']
+            stdio: ['ignore', 'pipe', 'pipe'],
+            cwd: deployFolderName
         });
         let stdoutData = '';
         let stderrData = '';
@@ -64,7 +66,7 @@ async function runDeployScript(deployScript, deployFolderName, logger) {
         });
     });
 }
-const handleDeployMessage = async (data, operatingSystem, keepDeployments, logger) => {
+const handleDeployment = async (data, operatingSystem, keepDeployments, logger) => {
     const { script } = data;
     if (!script)
         return { succeeded: false };
@@ -82,6 +84,16 @@ const handleDeployMessage = async (data, operatingSystem, keepDeployments, logge
         const scriptPath = `${deployFolderName}/deploy-script.ps1`;
         console.log(`powershell.exe -File ${scriptPath}`);
         fs_1.default.writeFileSync(scriptPath, script);
+        if (data.application.registry.type === 'nuget') {
+            const downloadUrl = data.application.registry.url + '/package/' + data.application.appId + '/' + data.version.version;
+            try {
+                (0, IISUtils_1.downloadNugetPackage)(downloadUrl, deployFolderName);
+            }
+            catch (e) {
+                logger(deployFolderName, 'error', 'Failed to download the Nuget packages from: ' + downloadUrl);
+                return { succeeded: false };
+            }
+        }
         logger(deployFolderName, 'info', `Deploy script written to ${scriptPath}`);
         deployScriptOutput = await runDeployScript(`powershell.exe -File ${scriptPath}`, deployFolderName, logger);
     }
@@ -94,4 +106,4 @@ const handleDeployMessage = async (data, operatingSystem, keepDeployments, logge
     }
     return { succeeded: deployScriptOutput.succeeded };
 };
-exports.handleDeployMessage = handleDeployMessage;
+exports.handleDeployment = handleDeployment;

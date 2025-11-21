@@ -5,7 +5,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const socket_io_client_1 = require("socket.io-client");
 const os_1 = __importDefault(require("os"));
-const handleDeployMessage_1 = require("./handleDeployMessage");
+const handleDeployment_1 = require("./handleDeployment");
+const logMessage_1 = require("./utils/logMessage");
 const args = process.argv.slice(2);
 const tokenIndex = args.indexOf('--agent-key');
 const token = process.env.AGENT_KEY || args[tokenIndex + 1];
@@ -37,7 +38,6 @@ socket.on('connect', () => {
     console.log('Connected to the Socket.IO server');
     socket.emit('register-key', { version });
 });
-// Handle disconnection
 socket.on('disconnect', () => {
     console.log('Disconnected from the server');
 });
@@ -85,25 +85,29 @@ async function processQueue() {
     const data = queue.shift();
     processingItem = data;
     try {
+        console.log('version status: in-progress', data);
         socket.emit(`version-status`, {
             status: 'in-progress',
             deploymentId: data.id,
         });
-        const output = [];
+        const logger = (0, logMessage_1.createLogger)(data.id, socket);
+        let isFailed = false;
         for (const step of data.steps) {
             if ((step.type === 'script' || step.type === 'derived') && step.message) {
-                const deployScriptOutput = await (0, handleDeployMessage_1.handleDeployMessage)(step.message, operatingSystem, keepDeployments);
-                output.push(deployScriptOutput);
+                const deployScriptOutput = await (0, handleDeployment_1.handleDeployment)(step.message, operatingSystem, keepDeployments, logger);
+                if (!deployScriptOutput.succeeded) {
+                    isFailed = true;
+                    break;
+                }
             }
             else {
                 console.log('Send server api call to execute step with id ' + step.id);
             }
         }
-        const allSucceeded = output.every((item) => item.succeeded);
+        console.log('sending status', isFailed ? 'error' : 'success');
         socket.emit(`version-status`, {
-            status: allSucceeded ? 'success' : 'error',
+            status: isFailed ? 'error' : 'success',
             deploymentId: data.id,
-            output: output.map(x => x.output).join('\n'),
         });
         processQueue();
     }

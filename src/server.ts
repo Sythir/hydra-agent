@@ -1,6 +1,6 @@
 import { io } from 'socket.io-client';
 import os from 'os';
-import { handleDeployMessage } from './handleDeployMessage';
+import { handleDeployment } from './handleDeployment';
 import { createLogger } from './utils/logMessage';
 
 const args = process.argv.slice(2);
@@ -57,7 +57,17 @@ let processingItem: any;
 export interface AgentDeployMessageDto {
   deployment: { id: string };
   script: string;
-  application: { id: string; name: string; code: string; appId: string };
+  application: {
+    id: string;
+    name: string;
+    code: string;
+    appId: string,
+    registry: {
+      name: string;
+      url: string;
+      type: string;
+    }
+  };
   project: { id: string; name: string; code: string };
   environment: { id: string; name: string };
   version: { id: string; version: string };
@@ -139,8 +149,8 @@ async function processQueue() {
     for (const step of data.steps) {
       if ((step.type === 'script' || step.type === 'derived') && step.message) {
 
-        const deployScriptOutput = await handleDeployMessage(step.message, operatingSystem, keepDeployments, logger);
-        if(!deployScriptOutput.succeeded) {
+        const deployScriptOutput = await handleDeployment(step.message, operatingSystem, keepDeployments, logger);
+        if (!deployScriptOutput.succeeded) {
           isFailed = true;
           break;
         }
@@ -149,9 +159,9 @@ async function processQueue() {
       }
 
     }
-  console.log('sending status', isFailed ? 'error': 'success')
+    console.log('sending status', isFailed ? 'error' : 'success')
     socket.emit(`version-status`, {
-      status: isFailed ? 'error': 'success',
+      status: isFailed ? 'error' : 'success',
       deploymentId: data.id,
     });
 

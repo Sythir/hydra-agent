@@ -9,6 +9,11 @@ interface App {
   name: string;
   code: string;
   appId: string;
+  registry: {
+    name: string;
+    url: string;
+    type: string;
+  }
 }
 
 interface Environment {
