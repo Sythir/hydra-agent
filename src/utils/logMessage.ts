@@ -8,10 +8,8 @@ export type LoggerFunc = (folderName: string, type: 'info' | 'warning' | 'error'
 export const createLogger = (deploymentId: string, socket: Socket) => {
   return (folderName: string, type: 'info' | 'warning' | 'error', message: string): void => {
     if(!message) throw new Error('Message is required');
-    const homeDir = os.homedir();
-    const folderLocation = path.join(homeDir, process.env.DEPLOY_LOGS_DIRECTORY || '', 'HydraDeploys', folderName);
-    console.log(message);
-    if (!fs.existsSync(folderLocation)) {
+    const folderLocation = folderName;
+     if (!fs.existsSync(folderLocation)) {
       fs.mkdirSync(folderLocation, { recursive: true });
     }
 
