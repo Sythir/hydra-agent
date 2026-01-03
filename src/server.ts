@@ -24,7 +24,7 @@ const operatingSystem = platform === 'win32' ? 'windows' : 'linux';
 
 socket.on(SOCKET_EVENTS.CONNECT, async () => {
   console.log('Connected to the Socket.IO server');
-  socket.emit(SOCKET_EVENTS.REGISTER_KEY, { version: config.agentVersion });
+  socket.emit(SOCKET_EVENTS.REGISTER_KEY, { version: config.agentVersion, os: operatingSystem });
 
   // Signal health after successful connection (for post-update health check)
   if (isPostUpdateStartup()) {
