@@ -122,8 +122,8 @@ while true; do
     "$CURRENT_BINARY" "$@" &
     AGENT_PID=$!
 
-    wait $AGENT_PID || true
-    EXIT_CODE=$?
+    EXIT_CODE=0
+    wait $AGENT_PID || EXIT_CODE=$?
 
     log "INFO" "Agent exited with code: $EXIT_CODE"
 
