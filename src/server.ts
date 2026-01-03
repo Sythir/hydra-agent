@@ -4,6 +4,8 @@ import { handleDeployment } from './handleDeployment';
 import { createLogger } from './utils/logMessage';
 import { loadEnvironmentConfig, parseKeepDeployments } from './config/environment';
 import { DEPLOYMENT_STATUS, SOCKET_EVENTS } from './config/constants';
+import { handleAgentUpdate, signalHealthy, isPostUpdateStartup } from './update';
+import { AgentUpdateMessage, UPDATE_STATUS } from './types/update';
 
 const args = process.argv.slice(2);
 const config = loadEnvironmentConfig(args);
@@ -20,13 +22,55 @@ const socket = io(config.host, {
 const platform = os.platform();
 const operatingSystem = platform === 'win32' ? 'windows' : 'linux';
 
-socket.on(SOCKET_EVENTS.CONNECT, () => {
+socket.on(SOCKET_EVENTS.CONNECT, async () => {
   console.log('Connected to the Socket.IO server');
   socket.emit(SOCKET_EVENTS.REGISTER_KEY, { version: config.agentVersion });
+
+  // Signal health after successful connection (for post-update health check)
+  if (isPostUpdateStartup()) {
+    try {
+      await signalHealthy();
+      console.log('Health check signal sent to launcher');
+    } catch (err) {
+      console.error('Failed to signal health:', err);
+    }
+  }
 });
 
 socket.on(SOCKET_EVENTS.DISCONNECT, () => {
   console.log('Disconnected from the server');
+});
+
+socket.on(`agent-update-${config.agentKey}`, async (data: AgentUpdateMessage) => {
+  console.log('Received update command:', data);
+
+  // Don't process update if we're currently deploying
+  if (isProcessing) {
+    socket.emit(SOCKET_EVENTS.AGENT_UPDATE_STATUS, {
+      updateId: data.updateId,
+      status: UPDATE_STATUS.FAILED,
+      currentVersion: config.agentVersion,
+      targetVersion: data.targetVersion,
+      error: 'Agent is currently processing a deployment. Try again later.',
+    });
+    return;
+  }
+
+  if (config.agentVersion === data.targetVersion && !data.force) {
+    socket.emit(SOCKET_EVENTS.AGENT_UPDATE_STATUS, {
+      updateId: data.updateId,
+      status: UPDATE_STATUS.SUCCESS,
+      currentVersion: config.agentVersion,
+      targetVersion: data.targetVersion,
+    });
+    return;
+  }
+
+  await handleAgentUpdate({
+    socket,
+    message: data,
+    currentVersion: config.agentVersion || 'unknown',
+  });
 });
 
 const queue: Message[] = [];

@@ -16,6 +16,7 @@ export const SOCKET_EVENTS = {
   REGISTER_KEY: 'register-key',
   VERSION_STATUS: 'version-status',
   LOG: 'log',
+  AGENT_UPDATE_STATUS: 'agent-update-status',
 } as const;
 
 export const DEPLOY_FOLDER_NAME = 'HydraDeploys';

@@ -9,6 +9,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        include:
+          - target: linux-x64
+            output: agent-linux
+          - target: win-x64
+            output: agent-win.exe
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -21,20 +29,72 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Inject version
+        run: |
+          sed -i "s/__BUILD_VERSION__/${{ github.ref_name }}/g" src/version.ts
+          cat src/version.ts
+
       - name: Build application
         run: pnpm build
 
-      - name: Build package
-        run: pnpm build:pkg
+      - name: Build package for ${{ matrix.target }}
+        run: pnpm pkg . --target node18-${{ matrix.target }} --output ./bin/${{ matrix.output }}
+
+      - name: Generate checksum
+        run: |
+          cd bin
+          sha256sum ${{ matrix.output }} > ${{ matrix.output }}.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.output }}
+          path: |
+            ./bin/${{ matrix.output }}
+            ./bin/${{ matrix.output }}.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: ./artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          cp artifacts/**/* release/ || true
+          cp scripts/launcher.sh release/
+          cp scripts/launcher.ps1 release/
 
       - name: Create release
-        if: startsWith(github.ref, 'refs/tags/') # Only for tags
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            ./bin/*
-          name: Release ${{ github.ref_name }} # Use the tag name as the release name
+            release/*
+          name: Release ${{ github.ref_name }}
           body: |
             Release ${{ github.ref_name }} of Sythir's Hydra Deploy Agent.
+
+            ## Downloads
+            - `agent-linux` - Linux x64 binary
+            - `agent-win.exe` - Windows x64 binary
+            - `launcher.sh` - Linux launcher script
+            - `launcher.ps1` - Windows PowerShell launcher script
+
+            ## Checksums
+            See `.sha256` files for verification.
+
+            ## Installation
+            1. Download the appropriate binary and launcher script for your platform
+            2. Place both files in `~/HydraAgent/current/` (Linux) or `%USERPROFILE%\HydraAgent\current\` (Windows)
+            3. Run the launcher script to start the agent
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

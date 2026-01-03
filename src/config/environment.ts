@@ -1,8 +1,9 @@
 import { DEFAULT_DEPLOY_TIMEOUT_SECONDS, DEFAULT_KEEP_DEPLOYMENTS } from './constants';
+import { AGENT_VERSION } from '../version';
 
 interface EnvironmentConfig {
   agentKey: string;
-  agentVersion: string | undefined;
+  agentVersion: string;
   host: string;
   deployLogsDirectory: string;
   deployTimeoutSeconds: number;
@@ -39,8 +40,8 @@ export function loadEnvironmentConfig(args: string[]): EnvironmentConfig {
 
   return {
     agentKey,
-    agentVersion: process.env.AGENT_VERSION,
-    host: getOptionalEnv('HOST', 'https://hydra.sythir.com/api/deployment-gateway'),
+    agentVersion: AGENT_VERSION,
+    host: 'http://localhost:8000/api/deployment-gateway', //getOptionalEnv('HOST', 'https://hydra.sythir.com/api/deployment-gateway'),
     deployLogsDirectory: getOptionalEnv('DEPLOY_LOGS_DIRECTORY', ''),
     deployTimeoutSeconds: getEnvNumber('DEPLOY_TIMEOUT_IN_SECONDS', DEFAULT_DEPLOY_TIMEOUT_SECONDS),
   };
