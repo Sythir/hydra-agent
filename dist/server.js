@@ -5,73 +5,58 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const socket_io_client_1 = require("socket.io-client");
 const os_1 = __importDefault(require("os"));
-const handleDeployMessage_1 = require("./handleDeployMessage");
+const handleDeployment_1 = require("./handleDeployment");
+const logMessage_1 = require("./utils/logMessage");
+const environment_1 = require("./config/environment");
+const constants_1 = require("./config/constants");
 const args = process.argv.slice(2);
-const tokenIndex = args.indexOf('--agent-key');
-const token = process.env.AGENT_KEY || args[tokenIndex + 1];
-const version = process.env.AGENT_VERSION;
-if (!token) {
-    throw new Error('Agent key is not set. Use the AGENT_KEY environment variable or pass it as an argument(e.g. --agent-key <agent-key>)');
-}
-const keepDeploymentsIndex = args.indexOf('--keep-deployments');
-let keepDeployments = 5;
-if (keepDeploymentsIndex !== -1) {
-    const parsedValue = parseInt(args[keepDeploymentsIndex + 1], 10);
-    if (!isNaN(parsedValue) && parsedValue > 0) {
-        keepDeployments = parsedValue;
-    }
-    else {
-        console.warn('Invalid value for --keep-deployments. Using default value of 5.');
-    }
-}
-console.log(`Agent Key: ${token.slice(0, 5)}... (partially shown)`);
-console.log(`Agent Version: ${version}`);
+const config = (0, environment_1.loadEnvironmentConfig)(args);
+const keepDeployments = (0, environment_1.parseKeepDeployments)(args);
+console.log(`Agent Key: ${config.agentKey.slice(0, 5)}... (partially shown)`);
+console.log(`Agent Version: ${config.agentVersion}`);
 console.log(`Keep Deployments: ${keepDeployments}`);
-const host = process.env.HOST || 'https://hydra.sythir.com/api/deployment-gateway';
-const socket = (0, socket_io_client_1.io)(host, {
-    query: { token, type: 'agent' },
+const socket = (0, socket_io_client_1.io)(config.host, {
+    query: { token: config.agentKey, type: 'agent' },
 });
 const platform = os_1.default.platform();
 const operatingSystem = platform === 'win32' ? 'windows' : 'linux';
-socket.on('connect', () => {
+socket.on(constants_1.SOCKET_EVENTS.CONNECT, () => {
     console.log('Connected to the Socket.IO server');
-    socket.emit('register-key', { version });
+    socket.emit(constants_1.SOCKET_EVENTS.REGISTER_KEY, { version: config.agentVersion });
 });
-// Handle disconnection
-socket.on('disconnect', () => {
+socket.on(constants_1.SOCKET_EVENTS.DISCONNECT, () => {
     console.log('Disconnected from the server');
 });
 const queue = [];
 let isProcessing = false;
-let processingItem;
-socket.on(`deploy-version-${token}`, async (data) => {
+let processingItem = null;
+socket.on(`deploy-version-${config.agentKey}`, async (data) => {
     const queueIndex = queue.findIndex((item) => item.id === data.id);
     if (queueIndex > -1) {
         return;
     }
-    // Add the data to the queue
     queue.push(data);
-    socket.emit(`version-status`, {
-        status: 'pending',
+    socket.emit(constants_1.SOCKET_EVENTS.VERSION_STATUS, {
+        status: constants_1.DEPLOYMENT_STATUS.PENDING,
         deploymentId: data.id,
     });
     if (!isProcessing) {
         processQueue();
     }
 });
-socket.on(`inprogress-deployments-${token}`, async (data) => {
+socket.on(`inprogress-deployments-${config.agentKey}`, async (data) => {
     if (!processingItem) {
-        socket.emit(`version-status`, {
-            status: 'error',
-            deploymentId: data
+        socket.emit(constants_1.SOCKET_EVENTS.VERSION_STATUS, {
+            status: constants_1.DEPLOYMENT_STATUS.ERROR,
+            deploymentId: data,
         });
         return;
     }
     if (processingItem.id === data) {
         return;
     }
-    socket.emit(`version-status`, {
-        status: 'error',
+    socket.emit(constants_1.SOCKET_EVENTS.VERSION_STATUS, {
+        status: constants_1.DEPLOYMENT_STATUS.ERROR,
         deploymentId: data,
     });
 });
@@ -85,33 +70,38 @@ async function processQueue() {
     const data = queue.shift();
     processingItem = data;
     try {
-        socket.emit(`version-status`, {
-            status: 'in-progress',
+        console.log('version status: in-progress', data);
+        socket.emit(constants_1.SOCKET_EVENTS.VERSION_STATUS, {
+            status: constants_1.DEPLOYMENT_STATUS.IN_PROGRESS,
             deploymentId: data.id,
         });
-        const output = [];
+        const logger = (0, logMessage_1.createLogger)(data.id, socket);
+        let isFailed = false;
         for (const step of data.steps) {
             if ((step.type === 'script' || step.type === 'derived') && step.message) {
-                const deployScriptOutput = await (0, handleDeployMessage_1.handleDeployMessage)(step.message, operatingSystem, keepDeployments);
-                output.push(deployScriptOutput);
+                const deployScriptOutput = await (0, handleDeployment_1.handleDeployment)(step.message, operatingSystem, keepDeployments, logger);
+                if (!deployScriptOutput.succeeded) {
+                    isFailed = true;
+                    break;
+                }
             }
             else {
                 console.log('Send server api call to execute step with id ' + step.id);
             }
         }
-        const allSucceeded = output.every((item) => item.succeeded);
-        socket.emit(`version-status`, {
-            status: allSucceeded ? 'success' : 'error',
+        console.log('sending status', isFailed ? 'error' : 'success');
+        socket.emit(constants_1.SOCKET_EVENTS.VERSION_STATUS, {
+            status: isFailed ? constants_1.DEPLOYMENT_STATUS.ERROR : constants_1.DEPLOYMENT_STATUS.SUCCESS,
             deploymentId: data.id,
-            output: output.map(x => x.output).join('\n'),
         });
         processQueue();
     }
     catch (error) {
-        socket.emit(`version-status`, {
-            status: 'error',
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        socket.emit(constants_1.SOCKET_EVENTS.VERSION_STATUS, {
+            status: constants_1.DEPLOYMENT_STATUS.ERROR,
             deploymentId: data.id,
-            output: error.message,
+            output: errorMessage,
         });
         processQueue();
     }

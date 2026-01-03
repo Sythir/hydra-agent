@@ -9,7 +9,7 @@ export const downloadNugetPackage = async (url: string, destination: string) => 
     return;
   }
 
-  console.log(`🚀 Starting download from: ${url}`);
+  console.log(`Starting download from: ${url}`);
 
   try {
     const response = await fetch(url);
@@ -22,25 +22,24 @@ export const downloadNugetPackage = async (url: string, destination: string) => 
     const buffer = Buffer.from(arrayBuffer);
     await fs.writeFile(destinationPath, buffer);
 
-    console.log(`✅ Successfully downloaded ${filename} to ${destinationPath}`);
+    console.log(`Successfully downloaded ${filename} to ${destinationPath}`);
 
   } catch (error) {
-    console.error(`❌ An error occurred during download:`, error);
+    console.error(`An error occurred during download:`, error);
     throw error;
   }
 }
 
-export const unzipPackage = async (pathToZip: string, outputDir: string) => {
+export const unzipPackage = async (pathToZip: string, outputDir: string): Promise<void> => {
   return new Promise((resolve, reject) =>
     fileSystem.createReadStream(pathToZip)
       .pipe(unzipper.Extract({ path: outputDir }))
       .on('close', () => {
         console.log(`Successfully unzipped "${pathToZip}" to "${outputDir}"`);
-        resolve(null);
+        resolve();
       })
-      .on('error', (err: any) => {
+      .on('error', (err: Error) => {
         console.error("An error occurred during unzipping:", err);
-        reject(null);
+        reject(err);
       }));
-
 }

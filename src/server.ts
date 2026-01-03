@@ -2,57 +2,36 @@ import { io } from 'socket.io-client';
 import os from 'os';
 import { handleDeployment } from './handleDeployment';
 import { createLogger } from './utils/logMessage';
+import { loadEnvironmentConfig, parseKeepDeployments } from './config/environment';
+import { DEPLOYMENT_STATUS, SOCKET_EVENTS } from './config/constants';
 
 const args = process.argv.slice(2);
+const config = loadEnvironmentConfig(args);
+const keepDeployments = parseKeepDeployments(args);
 
-const tokenIndex = args.indexOf('--agent-key');
-const token = process.env.AGENT_KEY || args[tokenIndex + 1];
-
-const version = process.env.AGENT_VERSION;
-
-
-if (!token) {
-  throw new Error(
-    'Agent key is not set. Use the AGENT_KEY environment variable or pass it as an argument(e.g. --agent-key <agent-key>)',
-  );
-}
-
-const keepDeploymentsIndex = args.indexOf('--keep-deployments');
-let keepDeployments = 5;
-
-if (keepDeploymentsIndex !== -1) {
-  const parsedValue = parseInt(args[keepDeploymentsIndex + 1], 10);
-  if (!isNaN(parsedValue) && parsedValue > 0) {
-    keepDeployments = parsedValue;
-  } else {
-    console.warn('Invalid value for --keep-deployments. Using default value of 5.');
-  }
-}
-
-console.log(`Agent Key: ${token.slice(0, 5)}... (partially shown)`);
-console.log(`Agent Version: ${version}`);
+console.log(`Agent Key: ${config.agentKey.slice(0, 5)}... (partially shown)`);
+console.log(`Agent Version: ${config.agentVersion}`);
 console.log(`Keep Deployments: ${keepDeployments}`);
-const host = process.env.HOST || 'https://hydra.sythir.com/api/deployment-gateway';
 
-const socket = io(host, {
-  query: { token, type: 'agent' },
+const socket = io(config.host, {
+  query: { token: config.agentKey, type: 'agent' },
 });
 
 const platform = os.platform();
 const operatingSystem = platform === 'win32' ? 'windows' : 'linux';
 
-socket.on('connect', () => {
+socket.on(SOCKET_EVENTS.CONNECT, () => {
   console.log('Connected to the Socket.IO server');
-  socket.emit('register-key', { version });
+  socket.emit(SOCKET_EVENTS.REGISTER_KEY, { version: config.agentVersion });
 });
 
-socket.on('disconnect', () => {
+socket.on(SOCKET_EVENTS.DISCONNECT, () => {
   console.log('Disconnected from the server');
 });
 
 const queue: Message[] = [];
 let isProcessing = false;
-let processingItem: any;
+let processingItem: Message | null = null;
 
 export interface AgentDeployMessageDto {
   deployment: { id: string };
@@ -86,20 +65,16 @@ interface Message {
   steps: Step[];
 }
 
-socket.on(`deploy-version-${token}`, async (data: Message) => {
-  const queueIndex = queue.findIndex(
-    (item) =>
-      item.id === data.id,
-  );
+socket.on(`deploy-version-${config.agentKey}`, async (data: Message) => {
+  const queueIndex = queue.findIndex((item) => item.id === data.id);
 
   if (queueIndex > -1) {
     return;
   }
 
-  // Add the data to the queue
   queue.push(data);
-  socket.emit(`version-status`, {
-    status: 'pending',
+  socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
+    status: DEPLOYMENT_STATUS.PENDING,
     deploymentId: data.id,
   });
   if (!isProcessing) {
@@ -107,22 +82,20 @@ socket.on(`deploy-version-${token}`, async (data: Message) => {
   }
 });
 
-socket.on(`inprogress-deployments-${token}`, async (data: string) => {
+socket.on(`inprogress-deployments-${config.agentKey}`, async (data: string) => {
   if (!processingItem) {
-    socket.emit(`version-status`, {
-      status: 'error',
-      deploymentId: data
+    socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
+      status: DEPLOYMENT_STATUS.ERROR,
+      deploymentId: data,
     });
     return;
   }
-  if (
-    processingItem.id === data
-  ) {
+  if (processingItem.id === data) {
     return;
   }
 
-  socket.emit(`version-status`, {
-    status: 'error',
+  socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
+    status: DEPLOYMENT_STATUS.ERROR,
     deploymentId: data,
   });
 });
@@ -138,9 +111,9 @@ async function processQueue() {
   const data = queue.shift()!;
   processingItem = data;
   try {
-    console.log('version status: in-progress', data)
-    socket.emit(`version-status`, {
-      status: 'in-progress',
+    console.log('version status: in-progress', data);
+    socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
+      status: DEPLOYMENT_STATUS.IN_PROGRESS,
       deploymentId: data.id,
     });
 
@@ -148,29 +121,28 @@ async function processQueue() {
     let isFailed = false;
     for (const step of data.steps) {
       if ((step.type === 'script' || step.type === 'derived') && step.message) {
-
         const deployScriptOutput = await handleDeployment(step.message, operatingSystem, keepDeployments, logger);
         if (!deployScriptOutput.succeeded) {
           isFailed = true;
           break;
         }
       } else {
-        console.log('Send server api call to execute step with id ' + step.id)
+        console.log('Send server api call to execute step with id ' + step.id);
       }
-
     }
-    console.log('sending status', isFailed ? 'error' : 'success')
-    socket.emit(`version-status`, {
-      status: isFailed ? 'error' : 'success',
+    console.log('sending status', isFailed ? 'error' : 'success');
+    socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
+      status: isFailed ? DEPLOYMENT_STATUS.ERROR : DEPLOYMENT_STATUS.SUCCESS,
       deploymentId: data.id,
     });
 
     processQueue();
-  } catch (error: any) {
-    socket.emit(`version-status`, {
-      status: 'error',
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
+      status: DEPLOYMENT_STATUS.ERROR,
       deploymentId: data.id,
-      output: error.message,
+      output: errorMessage,
     });
 
     processQueue();

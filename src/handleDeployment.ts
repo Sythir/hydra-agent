@@ -6,14 +6,13 @@ import path from 'path';
 import { LoggerFunc } from './utils/logMessage';
 import { execSync, spawn } from 'child_process';
 import { createDirectoryIfNotExists } from './utils/createDirectoryIfNotExists';
-import { ensureDirectoryExists } from './utils/ensureDirectoryExists';
 import { cleanupOldDeployments } from './utils/CleanupOldDeployments';
 import { ExecutionResultReturnType } from './types/ExecutionResultReturnType';
 import { downloadNugetPackage, unzipPackage } from './utils/IISUtils';
-
+import { DEFAULT_DEPLOY_TIMEOUT_SECONDS, DEPLOY_FOLDER_NAME } from './config/constants';
 
 async function runDeployScript(deployScript: string, deployFolderName: string, logger: LoggerFunc): Promise<ExecutionResultReturnType> {
-  const timeout = Number(process.env.DEPLOY_TIMEOUT_IN_SECONDS || 60) * 1000;
+  const timeout = Number(process.env.DEPLOY_TIMEOUT_IN_SECONDS || DEFAULT_DEPLOY_TIMEOUT_SECONDS) * 1000;
 
   logger(deployFolderName, 'info', `Starting deploy script execution`);
 
@@ -89,30 +88,26 @@ export const handleDeployment = async (
   if (!script) return { succeeded: false };
 
   const homeDir = os.homedir();
-  const folderLocation = path.join(homeDir, process.env.DEPLOY_LOGS_DIRECTORY || '', 'HydraDeploys');
+  const folderLocation = path.join(homeDir, process.env.DEPLOY_LOGS_DIRECTORY || '', DEPLOY_FOLDER_NAME);
   if (!createDirectoryIfNotExists(folderLocation, logger))
     return { output: `Error creating folder: ${folderLocation}`, succeeded: false };
 
   const uniqueHash = createDeployHash();
-  ensureDirectoryExists(
-    `${folderLocation}/${data.project.code}/${data.application.code}/${data.environment.name}/${data.version.version}-${uniqueHash}`,
-  );
-  const deployFolderName = `${folderLocation}/${data.project.code}/${data.application.code}/${data.environment.name}/${data.version.version}-${uniqueHash}`;
+  const deployFolderName = path.join(folderLocation, data.project.code, data.application.code, data.environment.name, `${data.version.version}-${uniqueHash}`);
 
   if (!createDirectoryIfNotExists(deployFolderName, logger))
     return { output: `Error creating folder: ${deployFolderName}`, succeeded: false };
   let deployScriptOutput: ExecutionResultReturnType = { output: 'Script did not execute', succeeded: false };
 
   if (operatingSystem === 'windows') {
-    const scriptPath = `${deployFolderName}/deploy-script.ps1`;
-    console.log(`powershell.exe -File ${scriptPath}`)
+    const scriptPath = path.join(deployFolderName, 'deploy-script.ps1');
+    console.log(`powershell.exe -File ${scriptPath}`);
     fs.writeFileSync(scriptPath, script);
 
     console.log(data.config);
-    
 
-    if(data.application.registry.type === 'nuget') {
-      const downloadUrl = data.application.registry.url + '/package/' + data.application.appId + '/' + data.version.version;
+    if (data.application.registry.type === 'nuget') {
+      const downloadUrl = `${data.application.registry.url}/package/${data.application.appId}/${data.version.version}`;
       try {
         await downloadNugetPackage(downloadUrl, deployFolderName);
       } catch (e) {
@@ -122,7 +117,8 @@ export const handleDeployment = async (
       }
 
       try {
-        await unzipPackage(`${deployFolderName.replaceAll('/', '\\')}\\app.zip`, deployFolderName);
+        const zipPath = path.join(deployFolderName, 'app.zip');
+        await unzipPackage(zipPath, deployFolderName);
       } catch (e) {
         console.error(e);
         logger(deployFolderName, 'error', 'Failed to extract files from .zip');
@@ -131,14 +127,15 @@ export const handleDeployment = async (
     }
 
     logger(deployFolderName, 'info', `Deploy script written to ${scriptPath}`);
-    deployScriptOutput = await runDeployScript(`powershell.exe -File ${scriptPath}`, deployFolderName, logger);
-  
-  } else {
-    fs.writeFileSync(`${deployFolderName}/deploy-script.sh`, script);
-    execSync(`chmod +x ${deployFolderName}/deploy-script.sh`);
-    logger(deployFolderName, 'info', `Deploy script written to ${deployFolderName}/deploy-script.sh`);
+    deployScriptOutput = await runDeployScript(`powershell.exe -File "${scriptPath}"`, deployFolderName, logger);
 
-    deployScriptOutput = await runDeployScript(`sh ${deployFolderName}/deploy-script.sh`, deployFolderName, logger);
+  } else {
+    const scriptPath = path.join(deployFolderName, 'deploy-script.sh');
+    fs.writeFileSync(scriptPath, script);
+    execSync(`chmod +x "${scriptPath}"`);
+    logger(deployFolderName, 'info', `Deploy script written to ${scriptPath}`);
+
+    deployScriptOutput = await runDeployScript(`sh "${scriptPath}"`, deployFolderName, logger);
     await cleanupOldDeployments(
       deployFolderName,
       data.project.code,
