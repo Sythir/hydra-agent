@@ -41,7 +41,7 @@ export function loadEnvironmentConfig(args: string[]): EnvironmentConfig {
   return {
     agentKey,
     agentVersion: AGENT_VERSION,
-    host: 'http://localhost:8000/api/deployment-gateway', //getOptionalEnv('HOST', 'https://hydra.sythir.com/api/deployment-gateway'),
+    host: getOptionalEnv('HOST', 'https://hydra.sythir.com/api/deployment-gateway'),
     deployLogsDirectory: getOptionalEnv('DEPLOY_LOGS_DIRECTORY', ''),
     deployTimeoutSeconds: getEnvNumber('DEPLOY_TIMEOUT_IN_SECONDS', DEFAULT_DEPLOY_TIMEOUT_SECONDS),
   };
