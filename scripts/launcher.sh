@@ -90,8 +90,6 @@ perform_update() {
     mv "$new_binary_path" "$CURRENT_BINARY"
     chmod +x "$CURRENT_BINARY"
 
-    rm -f "$UPDATE_LOCK"
-
     log "INFO" "Binary replacement complete"
     return 0
 }
@@ -144,6 +142,7 @@ while true; do
 
                 if health_check; then
                     log "INFO" "Update successful"
+                    rm -f "$UPDATE_LOCK"
                     wait $AGENT_PID || true
                     NEW_EXIT_CODE=$?
 
@@ -159,6 +158,7 @@ while true; do
                     log "ERROR" "Health check failed, initiating rollback"
                     kill $AGENT_PID 2>/dev/null || true
                     sleep 2
+                    rm -f "$UPDATE_LOCK"
 
                     if rollback; then
                         log "INFO" "Rollback successful, restarting with previous version"
