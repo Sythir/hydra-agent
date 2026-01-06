@@ -61,3 +61,18 @@ export function parseKeepDeployments(args: string[]): number {
 
   return parsedValue;
 }
+
+export function parseDeployTimeout(args: string[]): number {
+  const timeoutIndex = args.indexOf('--timeout');
+  if (timeoutIndex === -1) {
+    return DEFAULT_DEPLOY_TIMEOUT_SECONDS;
+  }
+
+  const parsedValue = parseInt(args[timeoutIndex + 1], 10);
+  if (isNaN(parsedValue) || parsedValue <= 0) {
+    console.warn(`Invalid value for --timeout. Using default value of ${DEFAULT_DEPLOY_TIMEOUT_SECONDS}.`);
+    return DEFAULT_DEPLOY_TIMEOUT_SECONDS;
+  }
+
+  return parsedValue;
+}

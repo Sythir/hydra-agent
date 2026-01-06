@@ -1,5 +1,5 @@
 export const DEFAULT_KEEP_DEPLOYMENTS = 5;
-export const DEFAULT_DEPLOY_TIMEOUT_SECONDS = 60;
+export const DEFAULT_DEPLOY_TIMEOUT_SECONDS = 300;
 
 export const DEPLOYMENT_STATUS = {
   PENDING: 'pending',

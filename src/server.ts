@@ -2,7 +2,7 @@ import { io } from 'socket.io-client';
 import os from 'os';
 import { handleDeployment } from './handleDeployment';
 import { createLogger } from './utils/logMessage';
-import { loadEnvironmentConfig, parseKeepDeployments } from './config/environment';
+import { loadEnvironmentConfig, parseKeepDeployments, parseDeployTimeout } from './config/environment';
 import { DEPLOYMENT_STATUS, SOCKET_EVENTS } from './config/constants';
 import { handleAgentUpdate, signalHealthy, isPostUpdateStartup } from './update';
 import { AgentUpdateMessage, UPDATE_STATUS } from './types/update';
@@ -10,10 +10,14 @@ import { AgentUpdateMessage, UPDATE_STATUS } from './types/update';
 const args = process.argv.slice(2);
 const config = loadEnvironmentConfig(args);
 const keepDeployments = parseKeepDeployments(args);
+const deployTimeout = parseDeployTimeout(args);
+
+process.env.DEPLOY_TIMEOUT_IN_SECONDS = deployTimeout.toString();
 
 console.log(`Agent Key: ${config.agentKey.slice(0, 5)}... (partially shown)`);
 console.log(`Agent Version: ${config.agentVersion}`);
 console.log(`Keep Deployments: ${keepDeployments}`);
+console.log(`Deploy Timeout: ${deployTimeout}s`);
 
 const socket = io(config.host, {
   query: { token: config.agentKey, type: 'agent' },
@@ -84,12 +88,12 @@ export interface AgentDeployMessageDto {
     id: string;
     name: string;
     code: string;
-    appId: string,
+    appId: string;
     registry: {
       name: string;
       url: string;
       type: string;
-    }
+    };
   };
   project: { id: string; name: string; code: string };
   environment: { id: string; name: string };

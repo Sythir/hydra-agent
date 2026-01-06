@@ -220,28 +220,29 @@ Start-ScheduledTask -TaskName "HydraAgent"
 
 ### Command Line Arguments
 
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `--agent-key <key>` | Yes | Your agent authentication key |
-| `--keep-deployments <n>` | No | Number of old deployments to keep (default: 5) |
+| Argument                 | Required | Description                                        |
+| ------------------------ | -------- | -------------------------------------------------- |
+| `--agent-key <key>`      | Yes      | Your agent authentication key                      |
+| `--keep-deployments <n>` | No       | Number of old deployments to keep (default: 5)     |
+| `--timeout <n>`          | No       | Deployment script timeout in seconds (default: 60) |
 
 ### Optional Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `HOST` | `https://hydra.sythir.com/api/deployment-gateway` | Gateway URL |
-| `AGENT_HOME` | `~/HydraAgent` | Agent installation directory |
-| `DEPLOY_LOGS_DIRECTORY` | - | Custom directory for deployment logs |
-| `DEPLOY_TIMEOUT_IN_SECONDS` | `60` | Deployment script timeout |
+| Variable                    | Default                                           | Description                          |
+| --------------------------- | ------------------------------------------------- | ------------------------------------ |
+| `HOST`                      | `https://hydra.sythir.com/api/deployment-gateway` | Gateway URL                          |
+| `AGENT_HOME`                | `~/HydraAgent`                                    | Agent installation directory         |
+| `DEPLOY_LOGS_DIRECTORY`     | -                                                 | Custom directory for deployment logs |
+| `DEPLOY_TIMEOUT_IN_SECONDS` | `60`                                              | Deployment script timeout            |
 
 ### Example with all options
 
 ```bash
 # Linux
-~/HydraAgent/launcher.sh --agent-key abc123 --keep-deployments 10
+~/HydraAgent/launcher.sh --agent-key abc123 --keep-deployments 10 --timeout 120
 
 # Windows
-& "$env:USERPROFILE\HydraAgent\launcher.ps1" --agent-key abc123 --keep-deployments 10
+& "$env:USERPROFILE\HydraAgent\launcher.ps1" --agent-key abc123 --keep-deployments 10 --timeout 120
 ```
 
 ---
@@ -301,6 +302,7 @@ journalctl -u hydra-agent -f
 ### Agent keeps restarting
 
 The launcher will exit after 3 consecutive crashes. Check:
+
 1. Launcher logs for error messages
 2. Correct `--agent-key` is provided
 3. Binary has execute permissions (Linux)

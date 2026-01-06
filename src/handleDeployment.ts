@@ -11,16 +11,21 @@ import { ExecutionResultReturnType } from './types/ExecutionResultReturnType';
 import { downloadNugetPackage, unzipPackage } from './utils/IISUtils';
 import { DEFAULT_DEPLOY_TIMEOUT_SECONDS, DEPLOY_FOLDER_NAME } from './config/constants';
 
-async function runDeployScript(deployScript: string, deployFolderName: string, logger: LoggerFunc): Promise<ExecutionResultReturnType> {
+async function runDeployScript(
+  deployScript: string,
+  deployFolderName: string,
+  logger: LoggerFunc,
+): Promise<ExecutionResultReturnType> {
   const timeout = Number(process.env.DEPLOY_TIMEOUT_IN_SECONDS || DEFAULT_DEPLOY_TIMEOUT_SECONDS) * 1000;
 
   logger(deployFolderName, 'info', `Starting deploy script execution`);
 
   return new Promise((resolve) => {
-    const childProcess = spawn(deployScript, { 
+    const childProcess = spawn(deployScript, {
       shell: true,
       stdio: ['ignore', 'pipe', 'pipe'],
-      cwd: deployFolderName
+      cwd: deployFolderName,
+      detached: process.platform !== 'win32',
     });
 
     let stdoutData = '';
@@ -29,11 +34,28 @@ async function runDeployScript(deployScript: string, deployFolderName: string, l
 
     const timeoutId = setTimeout(() => {
       hasTimedOut = true;
-      childProcess.kill('SIGTERM');
+
+      // Platform-specific implementation needed because:
+      // - spawn with shell: true creates a shell process that spawns the actual script
+      // - Killing the shell alone doesn't kill its child processes
+      // - Unix: Use negative PID to kill entire process group
+      // - Windows: Use taskkill /T to kill process tree
+      if (childProcess.pid) {
+        if (process.platform === 'win32') {
+          execSync(`taskkill /F /T /PID ${childProcess.pid}`, { stdio: 'ignore' });
+        } else {
+          try {
+            process.kill(-childProcess.pid, 'SIGKILL');
+          } catch {
+            childProcess.kill('SIGKILL');
+          }
+        }
+      }
+
       logger(
         deployFolderName,
         'error',
-        `Deploy script execution timed out after ${timeout / 1000} seconds. If this timeout is too short, you can increase it in the env variables`
+        `Deploy script execution timed out after ${timeout / 1000} seconds. If this timeout is too short, you can increase it in the env variables`,
       );
       resolve({ succeeded: false });
     }, timeout);
@@ -82,7 +104,7 @@ export const handleDeployment = async (
   data: Data,
   operatingSystem: 'windows' | 'linux',
   keepDeployments: number,
-  logger: LoggerFunc
+  logger: LoggerFunc,
 ): Promise<ExecutionResultReturnType> => {
   const { script } = data;
   if (!script) return { succeeded: false };
@@ -93,7 +115,13 @@ export const handleDeployment = async (
     return { output: `Error creating folder: ${folderLocation}`, succeeded: false };
 
   const uniqueHash = createDeployHash();
-  const deployFolderName = path.join(folderLocation, data.project.code, data.application.code, data.environment.name, `${data.version.version}-${uniqueHash}`);
+  const deployFolderName = path.join(
+    folderLocation,
+    data.project.code,
+    data.application.code,
+    data.environment.name,
+    `${data.version.version}-${uniqueHash}`,
+  );
 
   if (!createDirectoryIfNotExists(deployFolderName, logger))
     return { output: `Error creating folder: ${deployFolderName}`, succeeded: false };
@@ -128,7 +156,6 @@ export const handleDeployment = async (
 
     logger(deployFolderName, 'info', `Deploy script written to ${scriptPath}`);
     deployScriptOutput = await runDeployScript(`powershell.exe -File "${scriptPath}"`, deployFolderName, logger);
-
   } else {
     const scriptPath = path.join(deployFolderName, 'deploy-script.sh');
     fs.writeFileSync(scriptPath, script);
@@ -142,7 +169,7 @@ export const handleDeployment = async (
       data.application.code,
       data.environment.name,
       keepDeployments,
-      logger
+      logger,
     );
   }
   return { succeeded: deployScriptOutput.succeeded };
