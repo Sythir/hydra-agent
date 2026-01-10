@@ -170,6 +170,32 @@ export async function startAppPool(
 }
 
 /**
+ * Deletes an application pool
+ */
+export async function deleteAppPool(
+  appPoolName: string,
+  logger: LoggerFunc,
+  deployFolder: string,
+): Promise<void> {
+  logger(deployFolder, 'info', `Deleting application pool: ${appPoolName}`);
+  await executePowerShellOrThrow(
+    `
+    Import-Module WebAdministration
+    $appPool = Get-Item "IIS:\\AppPools\\${escapePowerShellString(appPoolName)}" -ErrorAction SilentlyContinue
+    if ($appPool) {
+      Remove-WebAppPool -Name '${escapePowerShellString(appPoolName)}'
+      Write-Output "App pool deleted"
+    } else {
+      Write-Output "App pool does not exist"
+    }
+    `,
+    logger,
+    deployFolder,
+    DeploymentErrorCodes.IIS_APP_POOL_CONFIG_FAILED,
+  );
+}
+
+/**
  * Ensures an application pool exists (creates if needed) and configures it
  */
 export async function ensureAppPool(

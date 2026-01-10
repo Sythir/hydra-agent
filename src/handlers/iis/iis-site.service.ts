@@ -27,6 +27,34 @@ export async function siteExists(
 }
 
 /**
+ * Gets the current physical path and app pool of a site
+ */
+export async function getSiteConfig(
+  siteName: string,
+  logger: LoggerFunc,
+  deployFolder: string,
+): Promise<{ physicalPath: string; appPool: string } | null> {
+  try {
+    const result = await executePowerShellOrThrow(
+      `
+      Import-Module WebAdministration
+      $site = Get-Item "IIS:\\Sites\\${escapePowerShellString(siteName)}" -ErrorAction Stop
+      $config = @{
+        physicalPath = $site.physicalPath
+        appPool = $site.applicationPool
+      }
+      $config | ConvertTo-Json -Compress
+      `,
+      logger,
+      deployFolder,
+    );
+    return JSON.parse(result);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Creates a new website with minimal configuration
  */
 export async function createSite(
@@ -146,26 +174,81 @@ export async function startSite(
 }
 
 /**
+ * Deletes a website
+ */
+export async function deleteSite(
+  siteName: string,
+  logger: LoggerFunc,
+  deployFolder: string,
+): Promise<void> {
+  logger(deployFolder, 'info', `Deleting website: ${siteName}`);
+  await executePowerShellOrThrow(
+    `
+    Import-Module WebAdministration
+    $site = Get-Item "IIS:\\Sites\\${escapePowerShellString(siteName)}" -ErrorAction SilentlyContinue
+    if ($site) {
+      Remove-Website -Name '${escapePowerShellString(siteName)}'
+      Write-Output "Website deleted"
+    } else {
+      Write-Output "Website does not exist"
+    }
+    `,
+    logger,
+    deployFolder,
+    DeploymentErrorCodes.IIS_SITE_CONFIG_FAILED,
+  );
+}
+
+/**
+ * Deletes a virtual directory
+ */
+export async function deleteVirtualDirectory(
+  siteName: string,
+  vdirName: string,
+  logger: LoggerFunc,
+  deployFolder: string,
+): Promise<void> {
+  logger(deployFolder, 'info', `Deleting virtual directory: ${vdirName} from site: ${siteName}`);
+  await executePowerShellOrThrow(
+    `
+    Import-Module WebAdministration
+    $fullPath = "IIS:\\Sites\\${escapePowerShellString(siteName)}\\${escapePowerShellString(vdirName)}"
+    if (Test-Path $fullPath) {
+      Remove-WebVirtualDirectory -Site '${escapePowerShellString(siteName)}' -Name '${escapePowerShellString(vdirName)}'
+      Write-Output "Virtual directory deleted"
+    } else {
+      Write-Output "Virtual directory does not exist"
+    }
+    `,
+    logger,
+    deployFolder,
+    DeploymentErrorCodes.IIS_VIRTUAL_DIR_FAILED,
+  );
+}
+
+/**
  * Configures virtual directories for a website
+ * @returns Array of virtual directory names that were created (not updated)
  */
 export async function configureVirtualDirectories(
   siteName: string,
   virtualDirectories: IisVirtualDirectory[],
   logger: LoggerFunc,
   deployFolder: string,
-): Promise<void> {
+): Promise<string[]> {
   if (virtualDirectories.length === 0) {
     logger(deployFolder, 'info', 'No virtual directories to configure');
-    return;
+    return [];
   }
 
   logger(deployFolder, 'info', `Configuring ${virtualDirectories.length} virtual directory(ies)`);
+  const createdVdirs: string[] = [];
 
   for (const vdir of virtualDirectories) {
     // Virtual directory path should start with / and we need to remove it for the name
     const vdirName = vdir.path.startsWith('/') ? vdir.path.substring(1) : vdir.path;
 
-    await executePowerShellOrThrow(
+    const result = await executePowerShellOrThrow(
       `
       Import-Module WebAdministration
       $siteName = '${escapePowerShellString(siteName)}'
@@ -177,11 +260,11 @@ export async function configureVirtualDirectories(
       if (Test-Path $fullPath) {
         # Update physical path
         Set-ItemProperty $fullPath -Name "physicalPath" -Value $vdirPath
-        Write-Output "Virtual directory '$vdirName' updated"
+        Write-Output "UPDATED"
       } else {
         # Create new virtual directory
         New-WebVirtualDirectory -Site $siteName -Name $vdirName -PhysicalPath $vdirPath
-        Write-Output "Virtual directory '$vdirName' created"
+        Write-Output "CREATED"
       }
       `,
       logger,
@@ -189,12 +272,19 @@ export async function configureVirtualDirectories(
       DeploymentErrorCodes.IIS_VIRTUAL_DIR_FAILED,
     );
 
+    if (result.includes('CREATED')) {
+      createdVdirs.push(vdirName);
+    }
+
     logger(deployFolder, 'info', `Virtual directory '${vdir.path}' -> '${vdir.physicalPath}' configured`);
   }
+
+  return createdVdirs;
 }
 
 /**
  * Ensures a website exists (creates if needed) and configures it
+ * @returns Array of virtual directory names that were created (not updated)
  */
 export async function ensureSite(
   config: IisSiteConfig,
@@ -202,7 +292,7 @@ export async function ensureSite(
   appPoolName: string,
   logger: LoggerFunc,
   deployFolder: string,
-): Promise<void> {
+): Promise<string[]> {
   const exists = await siteExists(config.name, logger, deployFolder);
 
   if (!exists) {
@@ -217,8 +307,10 @@ export async function ensureSite(
     await setSiteAppPool(config.name, appPoolName, logger, deployFolder);
   }
 
-  // Configure virtual directories
-  await configureVirtualDirectories(config.name, config.virtualDirectories, logger, deployFolder);
+  // Configure virtual directories and track which were created
+  const createdVdirs = await configureVirtualDirectories(config.name, config.virtualDirectories, logger, deployFolder);
 
   logger(deployFolder, 'info', `Website '${config.name}' configured successfully`);
+
+  return createdVdirs;
 }

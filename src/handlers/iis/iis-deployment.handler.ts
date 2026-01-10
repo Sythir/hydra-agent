@@ -11,8 +11,8 @@ import { DEPLOY_FOLDER_NAME, SOCKET_EVENTS } from '../../config/constants';
 import { ExecutionResultReturnType } from '../../types/ExecutionResultReturnType';
 
 import { checkIisAvailable } from './powershell.service';
-import { ensureAppPool, stopAppPool, startAppPool } from './iis-app-pool.service';
-import { ensureSite, stopSite, startSite } from './iis-site.service';
+import { ensureAppPool, stopAppPool, startAppPool, deleteAppPool, appPoolExists } from './iis-app-pool.service';
+import { ensureSite, stopSite, startSite, deleteSite, siteExists, getSiteConfig, deleteVirtualDirectory, updateSitePhysicalPath, setSiteAppPool } from './iis-site.service';
 import { configureBindings } from './iis-binding.service';
 import { configureAuthentication } from './iis-auth.service';
 import { deployConfigFiles } from './iis-config.service';
@@ -62,6 +62,18 @@ export async function handleIisDeployment(
 ): Promise<ExecutionResultReturnType> {
   const deploymentId = message.deployment.id;
   let deployFolder = '';
+
+  // Track deployment state for rollback
+  const deploymentState = {
+    appPoolCreated: false,
+    siteCreated: false,
+    originalSiteConfig: null as { physicalPath: string; appPool: string } | null,
+    virtualDirectoriesCreated: [] as string[],
+    stopped: {
+      appPool: false,
+      site: false,
+    },
+  };
 
   // Rollback actions to execute on failure
   const rollbackActions: Array<() => Promise<void>> = [];
@@ -122,30 +134,39 @@ export async function handleIisDeployment(
     if (message.options.stopAppPoolBeforeDeploy) {
       logger(deployFolder, 'info', 'Stopping app pool before deployment');
       await stopAppPool(message.appPool.name, logger, deployFolder);
-      // Add rollback to restart app pool
-      rollbackActions.push(async () => {
-        logger(deployFolder, 'info', 'Rollback: Starting app pool');
-        await startAppPool(message.appPool.name, logger, deployFolder).catch(() => {});
-      });
+      deploymentState.stopped.appPool = true;
     }
 
     if (message.options.stopSiteBeforeDeploy) {
       logger(deployFolder, 'info', 'Stopping site before deployment');
       await stopSite(message.site.name, logger, deployFolder);
-      // Add rollback to restart site
-      rollbackActions.push(async () => {
-        logger(deployFolder, 'info', 'Rollback: Starting site');
-        await startSite(message.site.name, logger, deployFolder).catch(() => {});
-      });
+      deploymentState.stopped.site = true;
     }
 
     // Step 4: Configure App Pool (40%)
     emitProgress(socket, deploymentId, 'configuring-app-pool', `Configuring app pool: ${message.appPool.name}...`, 40);
+
+    // Track if app pool existed before
+    const appPoolExisted = await appPoolExists(message.appPool.name, logger, deployFolder);
+    if (!appPoolExisted) {
+      deploymentState.appPoolCreated = true;
+    }
+
     await ensureAppPool(message.appPool, logger, deployFolder);
 
     // Step 5: Configure Site (55%)
     emitProgress(socket, deploymentId, 'configuring-site', `Configuring website: ${message.site.name}...`, 55);
-    await ensureSite(message.site, deployFolder, message.appPool.name, logger, deployFolder);
+
+    // Track if site existed before and save its original config
+    const siteExisted = await siteExists(message.site.name, logger, deployFolder);
+    if (siteExisted) {
+      deploymentState.originalSiteConfig = await getSiteConfig(message.site.name, logger, deployFolder);
+    } else {
+      deploymentState.siteCreated = true;
+    }
+
+    const createdVdirs = await ensureSite(message.site, deployFolder, message.appPool.name, logger, deployFolder);
+    deploymentState.virtualDirectoriesCreated = createdVdirs;
 
     // Step 6: Configure Bindings (65%)
     emitProgress(socket, deploymentId, 'configuring-bindings', 'Configuring site bindings...', 65);
@@ -190,14 +211,78 @@ export async function handleIisDeployment(
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     logger(deployFolder || '.', 'error', `IIS deployment failed: ${errorMessage}`);
 
-    // Execute rollback actions in reverse order
+    // Execute comprehensive rollback
     logger(deployFolder || '.', 'info', 'Executing rollback actions...');
+
+    // Execute legacy rollback actions first (if any)
     for (const action of rollbackActions.reverse()) {
       try {
         await action();
       } catch (rollbackError) {
         const rollbackErrorMessage = rollbackError instanceof Error ? rollbackError.message : 'Unknown error';
         logger(deployFolder || '.', 'error', `Rollback action failed: ${rollbackErrorMessage}`);
+      }
+    }
+
+    // Delete created virtual directories
+    if (deploymentState.virtualDirectoriesCreated.length > 0) {
+      logger(deployFolder || '.', 'info', `Rollback: Deleting ${deploymentState.virtualDirectoriesCreated.length} created virtual directories`);
+      for (const vdirName of deploymentState.virtualDirectoriesCreated) {
+        try {
+          await deleteVirtualDirectory(message.site.name, vdirName, logger, deployFolder || '.');
+        } catch (rollbackError) {
+          logger(deployFolder || '.', 'error', `Failed to delete virtual directory '${vdirName}': ${rollbackError}`);
+        }
+      }
+    }
+
+    // Rollback site changes
+    if (deploymentState.siteCreated) {
+      // Site was created by this deployment - delete it
+      logger(deployFolder || '.', 'info', `Rollback: Deleting created site '${message.site.name}'`);
+      try {
+        await deleteSite(message.site.name, logger, deployFolder || '.');
+      } catch (rollbackError) {
+        logger(deployFolder || '.', 'error', `Failed to delete site: ${rollbackError}`);
+      }
+    } else if (deploymentState.originalSiteConfig) {
+      // Site existed - restore original configuration
+      logger(deployFolder || '.', 'info', `Rollback: Restoring original site configuration`);
+      try {
+        await updateSitePhysicalPath(message.site.name, deploymentState.originalSiteConfig.physicalPath, logger, deployFolder || '.');
+        await setSiteAppPool(message.site.name, deploymentState.originalSiteConfig.appPool, logger, deployFolder || '.');
+      } catch (rollbackError) {
+        logger(deployFolder || '.', 'error', `Failed to restore site configuration: ${rollbackError}`);
+      }
+    }
+
+    // Rollback app pool changes
+    if (deploymentState.appPoolCreated) {
+      // App pool was created by this deployment - delete it
+      logger(deployFolder || '.', 'info', `Rollback: Deleting created app pool '${message.appPool.name}'`);
+      try {
+        await deleteAppPool(message.appPool.name, logger, deployFolder || '.');
+      } catch (rollbackError) {
+        logger(deployFolder || '.', 'error', `Failed to delete app pool: ${rollbackError}`);
+      }
+    }
+
+    // Start stopped resources (only if they still exist and weren't deleted)
+    if (deploymentState.stopped.site && !deploymentState.siteCreated) {
+      logger(deployFolder || '.', 'info', 'Rollback: Starting site');
+      try {
+        await startSite(message.site.name, logger, deployFolder || '.');
+      } catch (rollbackError) {
+        logger(deployFolder || '.', 'error', `Failed to start site: ${rollbackError}`);
+      }
+    }
+
+    if (deploymentState.stopped.appPool && !deploymentState.appPoolCreated) {
+      logger(deployFolder || '.', 'info', 'Rollback: Starting app pool');
+      try {
+        await startAppPool(message.appPool.name, logger, deployFolder || '.');
+      } catch (rollbackError) {
+        logger(deployFolder || '.', 'error', `Failed to start app pool: ${rollbackError}`);
       }
     }
 

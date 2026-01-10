@@ -24,7 +24,9 @@ export async function executePowerShell(
 ): Promise<PowerShellResult> {
   return new Promise((resolve) => {
     // Wrap command in try-catch for better error handling
+    // $ErrorActionPreference = "Stop" converts all errors to terminating exceptions
     const wrappedCommand = `
+      $ErrorActionPreference = "Stop"
       try {
         ${command}
         exit 0
