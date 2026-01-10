@@ -1,11 +1,13 @@
 import { io } from 'socket.io-client';
 import os from 'os';
 import { handleDeployment } from './handleDeployment';
+import { handleIisDeployment } from './handlers/iis';
 import { createLogger } from './utils/logMessage';
 import { loadEnvironmentConfig, parseKeepDeployments, parseDeployTimeout } from './config/environment';
 import { DEPLOYMENT_STATUS, SOCKET_EVENTS } from './config/constants';
 import { handleAgentUpdate, signalHealthy, isPostUpdateStartup } from './update';
 import { AgentUpdateMessage, UPDATE_STATUS } from './types/update';
+import { IisDeploymentMessageDto } from './types/iis';
 
 const args = process.argv.slice(2);
 const config = loadEnvironmentConfig(args);
@@ -105,7 +107,7 @@ interface Step {
   id: string;
   name: string;
   type: string;
-  message: AgentDeployMessageDto | null;
+  message: AgentDeployMessageDto | IisDeploymentMessageDto | null;
 }
 
 interface Message {
@@ -169,8 +171,28 @@ async function processQueue() {
     let isFailed = false;
     for (const step of data.steps) {
       if ((step.type === 'script' || step.type === 'derived') && step.message) {
-        const deployScriptOutput = await handleDeployment(step.message, operatingSystem, keepDeployments, logger);
+        const deployScriptOutput = await handleDeployment(
+          step.message as AgentDeployMessageDto,
+          operatingSystem,
+          keepDeployments,
+          logger,
+        );
         if (!deployScriptOutput.succeeded) {
+          isFailed = true;
+          break;
+        }
+      } else if (step.type === 'iis' && step.message) {
+        if (operatingSystem !== 'windows') {
+          logger('.', 'error', 'IIS deployments are only supported on Windows');
+          isFailed = true;
+          break;
+        }
+        const iisDeployOutput = await handleIisDeployment(
+          step.message as IisDeploymentMessageDto,
+          logger,
+          socket,
+        );
+        if (!iisDeployOutput.succeeded) {
           isFailed = true;
           break;
         }
