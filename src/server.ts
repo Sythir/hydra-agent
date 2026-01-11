@@ -186,7 +186,7 @@ async function processQueue() {
           isFailed = true;
           break;
         }
-      } else if (step.type === 'iis' && step.message) {
+      } else if (step.type === 'IIS' && step.message) {
         if (operatingSystem !== 'windows') {
           logger('.', 'error', 'IIS deployments are only supported on Windows');
           isFailed = true;
