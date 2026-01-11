@@ -2,6 +2,7 @@ import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import { LoggerFunc } from './logMessage';
+import { DEPLOYMENT_FOLDER_NAME } from '../config/constants';
 
 export async function cleanupOldDeployments(
   deployFolderName: string,
@@ -11,11 +12,8 @@ export async function cleanupOldDeployments(
   keepDeployments: number,
   logger: LoggerFunc
 ) {
-  const homeDir = os.homedir();
   const environmentDir = path.join(
-    homeDir,
-    process.env.DEPLOY_LOGS_DIRECTORY || '',
-    'HydraDeploys',
+    process.env.DEPLOYMENT_DIRECTORY || DEPLOYMENT_FOLDER_NAME,
     projectCode,
     applicationCode,
     environmentName,

@@ -9,7 +9,7 @@ import { createDirectoryIfNotExists } from './utils/createDirectoryIfNotExists';
 import { cleanupOldDeployments } from './utils/CleanupOldDeployments';
 import { ExecutionResultReturnType } from './types/ExecutionResultReturnType';
 import { downloadNugetPackage, unzipPackage } from './utils/IISUtils';
-import { DEFAULT_DEPLOY_TIMEOUT_SECONDS, DEPLOY_FOLDER_NAME } from './config/constants';
+import { DEFAULT_DEPLOY_TIMEOUT_SECONDS, DEPLOYMENT_FOLDER_NAME } from './config/constants';
 
 async function runDeployScript(
   deployScript: string,
@@ -109,8 +109,7 @@ export const handleDeployment = async (
   const { script } = data;
   if (!script) return { succeeded: false };
 
-  const homeDir = os.homedir();
-  const folderLocation = path.join(homeDir, process.env.DEPLOY_LOGS_DIRECTORY || '', DEPLOY_FOLDER_NAME);
+  const folderLocation = path.join(process.env.DEPLOYMENT_DIRECTORY || DEPLOYMENT_FOLDER_NAME);
   if (!createDirectoryIfNotExists(folderLocation, logger))
     return { output: `Error creating folder: ${folderLocation}`, succeeded: false };
 

@@ -7,7 +7,7 @@ import { LoggerFunc } from '../../utils/logMessage';
 import { createDirectoryIfNotExists } from '../../utils/createDirectoryIfNotExists';
 import { createDeployHash } from '../../utils/createDeployHash';
 import { downloadNugetPackage, unzipPackage } from '../../utils/IISUtils';
-import { DEPLOY_FOLDER_NAME, SOCKET_EVENTS } from '../../config/constants';
+import { DEPLOYMENT_FOLDER_NAME, SOCKET_EVENTS } from '../../config/constants';
 import { ExecutionResultReturnType } from '../../types/ExecutionResultReturnType';
 
 import { checkIisAvailable } from './powershell.service';
@@ -40,9 +40,8 @@ function emitProgress(
  * Creates the deployment directory path
  */
 function getDeploymentPath(message: IisDeploymentMessageDto): string {
-  const homeDir = os.homedir();
   const uniqueHash = createDeployHash();
-  const folderLocation = path.join(homeDir, process.env.DEPLOY_LOGS_DIRECTORY || '', DEPLOY_FOLDER_NAME);
+  const folderLocation = path.join(process.env.DEPLOYMENT_DIRECTORY || DEPLOYMENT_FOLDER_NAME);
 
   return path.join(
     folderLocation,
