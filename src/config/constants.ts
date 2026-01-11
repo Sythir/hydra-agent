@@ -17,7 +17,6 @@ export const SOCKET_EVENTS = {
   VERSION_STATUS: 'version-status',
   LOG: 'log',
   AGENT_UPDATE_STATUS: 'agent-update-status',
-  // IIS deployment events
   IIS_DEPLOYMENT_PROGRESS: 'iis-deployment-progress',
 } as const;
 
