@@ -78,14 +78,14 @@ export function parseDeployTimeout(args: string[]): number {
 }
 
 export function parseDeploymentDirectory(args: string[]): string | undefined {
-  const directoryIndex = args.indexOf('--deployment-directory');
+  const directoryIndex = args.indexOf('--deployment-dir');
   if (directoryIndex === -1) {
     return undefined;
   }
 
   const directory = args[directoryIndex + 1];
   if (!directory) {
-    console.warn('No value provided for --deployment-directory. Using default.');
+    console.warn('No value provided for --deployment-dir. Using default.');
     return undefined;
   }
 
