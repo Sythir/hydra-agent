@@ -128,10 +128,7 @@ export const handleDeployment = async (
 
   if (operatingSystem === 'windows') {
     const scriptPath = path.join(deployFolderName, 'deploy-script.ps1');
-    console.log(`powershell.exe -File ${scriptPath}`);
     fs.writeFileSync(scriptPath, script);
-
-    console.log(data.config);
 
     if (data.application.registry.type === 'nuget') {
       const downloadUrl = `${data.application.registry.url}/package/${data.application.appId}/${data.version.version}`;
