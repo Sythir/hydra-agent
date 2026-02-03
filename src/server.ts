@@ -3,7 +3,12 @@ import os from 'os';
 import { handleDeployment } from './handleDeployment';
 import { handleIisDeployment } from './handlers/iis';
 import { createLogger } from './utils/logMessage';
-import { loadEnvironmentConfig, parseKeepDeployments, parseDeployTimeout, parseDeploymentDirectory } from './config/environment';
+import {
+  loadEnvironmentConfig,
+  parseKeepDeployments,
+  parseDeployTimeout,
+  parseDeploymentDirectory,
+} from './config/environment';
 import { DEPLOYMENT_STATUS, SOCKET_EVENTS } from './config/constants';
 import { handleAgentUpdate, signalHealthy, isPostUpdateStartup } from './update';
 import { AgentUpdateMessage, UPDATE_STATUS } from './types/update';
@@ -166,7 +171,7 @@ async function processQueue() {
   const data = queue.shift()!;
   processingItem = data;
   try {
-    console.log('version status: in-progress', data);
+    console.log('version status: in-progress', JSON.stringify(data, null, 2));
     socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
       status: DEPLOYMENT_STATUS.IN_PROGRESS,
       deploymentId: data.id,
@@ -192,11 +197,7 @@ async function processQueue() {
           isFailed = true;
           break;
         }
-        const iisDeployOutput = await handleIisDeployment(
-          step.message as IisDeploymentMessageDto,
-          logger,
-          socket,
-        );
+        const iisDeployOutput = await handleIisDeployment(step.message as IisDeploymentMessageDto, logger, socket);
         if (!iisDeployOutput.succeeded) {
           isFailed = true;
           break;

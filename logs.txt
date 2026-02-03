@@ -1,0 +1,11 @@
+[2026-01-30T20:15:30.982Z] [ERROR] IIS deployments are only supported on Windows
+[2026-01-30T20:16:42.421Z] [ERROR] IIS deployments are only supported on Windows
+[2026-01-30T21:10:37.849Z] [ERROR] IIS deployments are only supported on Windows
+[2026-01-30T21:11:11.010Z] [ERROR] IIS deployments are only supported on Windows
+[2026-01-30T21:56:47.382Z] [ERROR] IIS deployments are only supported on Windows
+[2026-01-30T21:57:43.360Z] [ERROR] IIS deployments are only supported on Windows
+[2026-02-03T21:36:06.626Z] [ERROR] IIS deployments are only supported on Windows
+[2026-02-03T21:50:58.292Z] [ERROR] IIS deployments are only supported on Windows
+[2026-02-03T21:51:08.918Z] [ERROR] IIS deployments are only supported on Windows
+[2026-02-03T22:07:04.133Z] [ERROR] IIS deployments are only supported on Windows
+[2026-02-03T22:07:15.070Z] [ERROR] IIS deployments are only supported on Windows
