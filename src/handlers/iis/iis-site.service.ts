@@ -212,8 +212,8 @@ export async function deleteVirtualDirectory(
   await executePowerShellOrThrow(
     `
     Import-Module WebAdministration
-    $fullPath = "IIS:\\Sites\\${escapePowerShellString(siteName)}\\${escapePowerShellString(vdirName)}"
-    if (Test-Path $fullPath) {
+    $existing = Get-WebVirtualDirectory -Site '${escapePowerShellString(siteName)}' -Name '${escapePowerShellString(vdirName)}'
+    if ($existing) {
       Remove-WebVirtualDirectory -Site '${escapePowerShellString(siteName)}' -Name '${escapePowerShellString(vdirName)}'
       Write-Output "Virtual directory deleted"
     } else {
@@ -248,18 +248,35 @@ export async function configureVirtualDirectories(
     // Virtual directory path should start with / and we need to remove it for the name
     const vdirName = vdir.path.startsWith('/') ? vdir.path.substring(1) : vdir.path;
 
+    // Ensure the physical path exists before creating the virtual directory
     const result = await executePowerShellOrThrow(
+      `
+      if (-not (Test-Path '${escapePowerShellString(vdir.physicalPath)}')) {
+        New-Item -Path '${escapePowerShellString(vdir.physicalPath)}' -ItemType Directory -Force | Out-Null
+        Write-Output "DIRECTORY_CREATED"
+      }
+      `,
+      logger,
+      deployFolder,
+      DeploymentErrorCodes.IIS_VIRTUAL_DIR_FAILED,
+    );
+
+    if (result.includes('DIRECTORY_CREATED')) {
+      logger(deployFolder, 'info', `Created missing physical path: ${vdir.physicalPath}`);
+    }
+
+    const vdirResult = await executePowerShellOrThrow(
       `
       Import-Module WebAdministration
       $siteName = '${escapePowerShellString(siteName)}'
       $vdirName = '${escapePowerShellString(vdirName)}'
       $vdirPath = '${escapePowerShellString(vdir.physicalPath)}'
-      $fullPath = "IIS:\\Sites\\$siteName\\$vdirName"
 
-      # Check if virtual directory exists
-      if (Test-Path $fullPath) {
+      # Check if virtual directory exists using Get-WebVirtualDirectory (avoids IIS PSDrive path resolution issues)
+      $existing = Get-WebVirtualDirectory -Site $siteName -Name $vdirName
+      if ($existing) {
         # Update physical path
-        Set-ItemProperty $fullPath -Name "physicalPath" -Value $vdirPath
+        Set-WebConfigurationProperty -Filter "/system.applicationHost/sites/site[@name='$siteName']/application[@path='/']/virtualDirectory[@path='/$vdirName']" -Name "physicalPath" -Value $vdirPath -PSPath "IIS:\\"
         Write-Output "UPDATED"
       } else {
         # Create new virtual directory
@@ -272,7 +289,7 @@ export async function configureVirtualDirectories(
       DeploymentErrorCodes.IIS_VIRTUAL_DIR_FAILED,
     );
 
-    if (result.includes('CREATED')) {
+    if (vdirResult.includes('CREATED')) {
       createdVdirs.push(vdirName);
     }
 

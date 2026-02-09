@@ -188,6 +188,7 @@ async function processQueue() {
           logger,
         );
         if (!deployScriptOutput.succeeded) {
+          console.error(`Script deployment failed for step "${step.name}":`, deployScriptOutput.output);
           isFailed = true;
           break;
         }
@@ -199,6 +200,7 @@ async function processQueue() {
         }
         const iisDeployOutput = await handleIisDeployment(step.message as IisDeploymentMessageDto, logger, socket);
         if (!iisDeployOutput.succeeded) {
+          console.error(`IIS deployment failed for step "${step.name}":`, iisDeployOutput.output);
           isFailed = true;
           break;
         }
@@ -215,6 +217,10 @@ async function processQueue() {
     processQueue();
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`Deployment ${data.id} threw an unhandled error:`, errorMessage);
+    if (error instanceof Error && error.stack) {
+      console.error(error.stack);
+    }
     socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
       status: DEPLOYMENT_STATUS.ERROR,
       deploymentId: data.id,
