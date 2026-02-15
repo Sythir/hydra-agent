@@ -3,7 +3,7 @@ FROM node:22
 # Install pnpm globally
 RUN npm install -g pnpm@10.8.0
 
-WORKDIR /usr/src/app
+WORKDIR /workspace
 
 # Start development server with hot-reload
-CMD ["sh", "-c", "pnpm i && pnpm dev"]
+CMD ["sh", "-c", "pnpm i && cd agent && pnpm dev"]
