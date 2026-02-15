@@ -17,9 +17,6 @@ import { configureBindings } from './iis-binding.service';
 import { configureAuthentication } from './iis-auth.service';
 import { deployConfigFiles } from './iis-config.service';
 
-/**
- * Emits progress events for IIS deployment
- */
 function emitProgress(
   socket: Socket,
   deploymentId: string,
@@ -36,9 +33,6 @@ function emitProgress(
   socket.emit(SOCKET_EVENTS.IIS_DEPLOYMENT_PROGRESS, progressEvent);
 }
 
-/**
- * Creates the deployment directory path
- */
 function getDeploymentPath(message: IisDeploymentMessageDto): string {
   const uniqueHash = createDeployHash();
   const folderLocation = path.join(process.env.DEPLOYMENT_DIRECTORY || DEPLOYMENT_FOLDER_NAME);
@@ -51,9 +45,6 @@ function getDeploymentPath(message: IisDeploymentMessageDto): string {
   );
 }
 
-/**
- * Handles IIS deployment orchestration
- */
 export async function handleIisDeployment(
   message: IisDeploymentMessageDto,
   logger: LoggerFunc,
@@ -153,10 +144,8 @@ export async function handleIisDeployment(
 
     await ensureAppPool(message.appPool, logger, deployFolder);
 
-    // Step 5: Configure Site (55%)
     emitProgress(socket, deploymentId, 'configuring-site', `Configuring website: ${message.site.name}...`, 55);
 
-    // Track if site existed before and save its original config
     const siteExisted = await siteExists(message.site.name, logger, deployFolder);
     if (siteExisted) {
       deploymentState.originalSiteConfig = await getSiteConfig(message.site.name, logger, deployFolder);
@@ -167,7 +156,6 @@ export async function handleIisDeployment(
     const createdVdirs = await ensureSite(message.site, deployFolder, message.appPool.name, logger, deployFolder);
     deploymentState.virtualDirectoriesCreated = createdVdirs;
 
-    // Step 6: Configure Bindings (65%)
     emitProgress(socket, deploymentId, 'configuring-bindings', 'Configuring site bindings...', 65);
     await configureBindings(
       message.site.name,
@@ -177,15 +165,12 @@ export async function handleIisDeployment(
       deployFolder,
     );
 
-    // Step 7: Configure Authentication (75%)
     emitProgress(socket, deploymentId, 'configuring-auth', 'Configuring authentication...', 75);
     await configureAuthentication(message.site.name, message.authentication, logger, deployFolder);
 
-    // Step 8: Deploy Config Files (85%)
     emitProgress(socket, deploymentId, 'deploying-configs', 'Deploying configuration files...', 85);
     await deployConfigFiles(message.configs, deployFolder, logger);
 
-    // Step 9: Start IIS resources if configured (95%)
     if (message.options.startAfterSuccessfulDeployment) {
       emitProgress(socket, deploymentId, 'starting-resources', 'Starting IIS resources...', 95);
 
@@ -196,7 +181,6 @@ export async function handleIisDeployment(
       await startSite(message.site.name, logger, deployFolder);
     }
 
-    // Step 10: Complete (100%)
     emitProgress(socket, deploymentId, 'complete', 'IIS deployment completed successfully', 100);
     logger(deployFolder, 'info', 'IIS deployment completed successfully');
 
@@ -210,10 +194,8 @@ export async function handleIisDeployment(
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     logger(deployFolder || '.', 'error', `IIS deployment failed: ${errorMessage}`);
 
-    // Execute comprehensive rollback
     logger(deployFolder || '.', 'info', 'Executing rollback actions...');
 
-    // Execute legacy rollback actions first (if any)
     for (const action of rollbackActions.reverse()) {
       try {
         await action();
