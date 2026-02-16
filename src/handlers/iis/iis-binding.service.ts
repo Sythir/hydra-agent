@@ -38,7 +38,6 @@ export async function getExistingBindings(
   );
 
   try {
-    // Handle empty or single result cases
     if (!result || result === 'null' || result === '') {
       return [];
     }
@@ -51,9 +50,6 @@ export async function getExistingBindings(
   }
 }
 
-/**
- * Gets existing HTTPS bindings with their SSL certificate thumbprints
- */
 export async function getExistingHttpsBindings(
   siteName: string,
   logger: LoggerFunc,
