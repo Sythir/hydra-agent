@@ -1,37 +1,26 @@
-import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import { LoggerFunc } from './logMessage';
-import { DEPLOYMENT_FOLDER_NAME } from '../config/constants';
 
 export async function cleanupOldDeployments(
   deployFolderName: string,
-  projectCode: string,
-  applicationCode: string,
-  environmentName: string,
+  parentDir: string,
   keepDeployments: number,
   logger: LoggerFunc
 ) {
-  const environmentDir = path.join(
-    process.env.DEPLOYMENT_DIRECTORY || DEPLOYMENT_FOLDER_NAME,
-    projectCode,
-    applicationCode,
-    environmentName,
-  );
-
   try {
-    const entries = await fs.promises.readdir(environmentDir, { withFileTypes: true });
+    const entries = await fs.promises.readdir(parentDir, { withFileTypes: true });
     const directories = entries
       .filter((entry) => entry.isDirectory())
       .sort((a, b) => {
-        const aStat = fs.statSync(path.join(environmentDir, a.name));
-        const bStat = fs.statSync(path.join(environmentDir, b.name));
+        const aStat = fs.statSync(path.join(parentDir, a.name));
+        const bStat = fs.statSync(path.join(parentDir, b.name));
         return aStat.birthtimeMs - bStat.birthtimeMs; // Sort by creation time
       });
 
     if (directories.length > keepDeployments) {
       const oldestDir = directories[0];
-      const oldestDirPath = path.join(environmentDir, oldestDir.name);
+      const oldestDirPath = path.join(parentDir, oldestDir.name);
 
       // Use a more robust way to delete the directory recursively
       await fs.promises.rm(oldestDirPath, { recursive: true, force: true });

@@ -159,14 +159,7 @@ export const handleDeployment = async (
     logger(deployFolderName, 'info', `Deploy script written to ${scriptPath}`);
 
     deployScriptOutput = await runDeployScript(`sh "${scriptPath}"`, deployFolderName, logger);
-    await cleanupOldDeployments(
-      deployFolderName,
-      data.project.code,
-      data.application.code,
-      data.environment.name,
-      keepDeployments,
-      logger,
-    );
+    await cleanupOldDeployments(deployFolderName, path.dirname(deployFolderName), keepDeployments, logger);
   }
   return { succeeded: deployScriptOutput.succeeded };
 };

@@ -198,7 +198,7 @@ async function processQueue() {
           isFailed = true;
           break;
         }
-        const iisDeployOutput = await handleIisDeployment(step.message as IisDeploymentMessageDto, logger, socket);
+        const iisDeployOutput = await handleIisDeployment(step.message as IisDeploymentMessageDto, logger, socket, keepDeployments);
         if (!iisDeployOutput.succeeded) {
           console.error(`IIS deployment failed for step "${step.name}":`, iisDeployOutput.output);
           isFailed = true;

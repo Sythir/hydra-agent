@@ -1,5 +1,3 @@
-import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { Socket } from 'socket.io-client';
 import { IisDeploymentMessageDto, IisDeploymentResult, IisDeploymentProgress, ExistingBinding } from '../../types/iis';
@@ -8,6 +6,7 @@ import { createDirectoryIfNotExists } from '../../utils/createDirectoryIfNotExis
 import { createDeployHash } from '../../utils/createDeployHash';
 import { downloadNugetPackage, unzipPackage } from '../../utils/IISUtils';
 import { DEPLOYMENT_FOLDER_NAME, SOCKET_EVENTS } from '../../config/constants';
+import { cleanupOldDeployments } from '../../utils/CleanupOldDeployments';
 import { ExecutionResultReturnType } from '../../types/ExecutionResultReturnType';
 
 import { checkIisAvailable } from './powershell.service';
@@ -16,6 +15,7 @@ import { ensureSite, stopSite, startSite, deleteSite, siteExists, getSiteConfig,
 import { configureBindings, getExistingBindings, restoreBindings } from './iis-binding.service';
 import { configureAuthentication } from './iis-auth.service';
 import { deployConfigFiles } from './iis-config.service';
+
 
 function emitProgress(
   socket: Socket,
@@ -49,6 +49,7 @@ export async function handleIisDeployment(
   message: IisDeploymentMessageDto,
   logger: LoggerFunc,
   socket: Socket,
+  keepDeployments: number,
 ): Promise<ExecutionResultReturnType> {
   const deploymentId = message.deployment.id;
   let deployFolder = '';
@@ -190,6 +191,9 @@ export async function handleIisDeployment(
       logger(deployFolder, 'info', 'Starting site after deployment');
       await startSite(message.site.name, logger, deployFolder);
     }
+
+    // Clean up old deployment folders
+    await cleanupOldDeployments(deployFolder, path.dirname(deployFolder), keepDeployments, logger);
 
     emitProgress(socket, deploymentId, 'complete', 'IIS deployment completed successfully', 100);
     logger(deployFolder, 'info', 'IIS deployment completed successfully');
