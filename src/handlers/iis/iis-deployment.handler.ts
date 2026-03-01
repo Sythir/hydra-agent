@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { Socket } from 'socket.io-client';
-import { IisDeploymentMessageDto, IisDeploymentResult, IisDeploymentProgress } from '../../types/iis';
+import { IisDeploymentMessageDto, IisDeploymentResult, IisDeploymentProgress, ExistingBinding } from '../../types/iis';
 import { LoggerFunc } from '../../utils/logMessage';
 import { createDirectoryIfNotExists } from '../../utils/createDirectoryIfNotExists';
 import { createDeployHash } from '../../utils/createDeployHash';
@@ -13,7 +13,7 @@ import { ExecutionResultReturnType } from '../../types/ExecutionResultReturnType
 import { checkIisAvailable } from './powershell.service';
 import { ensureAppPool, stopAppPool, startAppPool, deleteAppPool, appPoolExists } from './iis-app-pool.service';
 import { ensureSite, stopSite, startSite, deleteSite, siteExists, getSiteConfig, deleteVirtualDirectory, updateSitePhysicalPath, setSiteAppPool } from './iis-site.service';
-import { configureBindings } from './iis-binding.service';
+import { configureBindings, getExistingBindings, restoreBindings } from './iis-binding.service';
 import { configureAuthentication } from './iis-auth.service';
 import { deployConfigFiles } from './iis-config.service';
 
@@ -57,7 +57,7 @@ export async function handleIisDeployment(
   const deploymentState = {
     appPoolCreated: false,
     siteCreated: false,
-    originalSiteConfig: null as { physicalPath: string; appPool: string } | null,
+    originalSiteConfig: null as { physicalPath: string; appPool: string; bindings: ExistingBinding[] } | null,
     virtualDirectoriesCreated: [] as string[],
     stopped: {
       appPool: false,
@@ -92,30 +92,34 @@ export async function handleIisDeployment(
     // Step 2: Download and extract application package (20%)
     emitProgress(socket, deploymentId, 'downloading', 'Downloading application package...', 10);
 
-    if (message.application.registry.type === 'nuget') {
-      const downloadUrl = `${message.application.registry.url}/package/${message.application.appId}/${message.version.version}`;
-      logger(deployFolder, 'info', `Downloading package from: ${downloadUrl}`);
+    if (message.application.registry.type !== 'nuget') {
+      const errorMessage = `IIS deployments only work with the Nuget registry`;
+      logger(deployFolder, 'error', errorMessage);
+      return { succeeded: false, output: errorMessage };
+    }
 
-      try {
-        await downloadNugetPackage(downloadUrl, deployFolder);
-        logger(deployFolder, 'info', 'Package downloaded successfully');
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        logger(deployFolder, 'error', `Failed to download package: ${errorMessage}`);
-        return { succeeded: false, output: `Failed to download package: ${errorMessage}` };
-      }
+    const downloadUrl = `${message.application.registry.url}/package/${message.application.appId}/${message.version.version}`;
+    logger(deployFolder, 'info', `Downloading package from: ${downloadUrl}`);
 
-      emitProgress(socket, deploymentId, 'extracting', 'Extracting application package...', 15);
+    try {
+      await downloadNugetPackage(downloadUrl, deployFolder);
+      logger(deployFolder, 'info', 'Package downloaded successfully');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger(deployFolder, 'error', `Failed to download package: ${errorMessage}`);
+      return { succeeded: false, output: `Failed to download package: ${errorMessage}` };
+    }
 
-      try {
-        const zipPath = path.join(deployFolder, 'app.zip');
-        await unzipPackage(zipPath, deployFolder);
-        logger(deployFolder, 'info', 'Package extracted successfully');
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        logger(deployFolder, 'error', `Failed to extract package: ${errorMessage}`);
-        return { succeeded: false, output: `Failed to extract package: ${errorMessage}` };
-      }
+    emitProgress(socket, deploymentId, 'extracting', 'Extracting application package...', 15);
+
+    try {
+      const zipPath = path.join(deployFolder, 'app.zip');
+      await unzipPackage(zipPath, deployFolder);
+      logger(deployFolder, 'info', 'Package extracted successfully');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger(deployFolder, 'error', `Failed to extract package: ${errorMessage}`);
+      return { succeeded: false, output: `Failed to extract package: ${errorMessage}` };
     }
 
     // Step 3: Stop IIS resources if configured (25%)
@@ -148,7 +152,13 @@ export async function handleIisDeployment(
 
     const siteExisted = await siteExists(message.site.name, logger, deployFolder);
     if (siteExisted) {
-      deploymentState.originalSiteConfig = await getSiteConfig(message.site.name, logger, deployFolder);
+      const [siteConfig, existingBindings] = await Promise.all([
+        getSiteConfig(message.site.name, logger, deployFolder),
+        getExistingBindings(message.site.name, logger, deployFolder),
+      ]);
+      if (siteConfig) {
+        deploymentState.originalSiteConfig = { ...siteConfig, bindings: existingBindings };
+      }
     } else {
       deploymentState.siteCreated = true;
     }
@@ -232,6 +242,7 @@ export async function handleIisDeployment(
       try {
         await updateSitePhysicalPath(message.site.name, deploymentState.originalSiteConfig.physicalPath, logger, deployFolder || '.');
         await setSiteAppPool(message.site.name, deploymentState.originalSiteConfig.appPool, logger, deployFolder || '.');
+        await restoreBindings(message.site.name, deploymentState.originalSiteConfig.bindings, logger, deployFolder || '.');
       } catch (rollbackError) {
         logger(deployFolder || '.', 'error', `Failed to restore site configuration: ${rollbackError}`);
       }

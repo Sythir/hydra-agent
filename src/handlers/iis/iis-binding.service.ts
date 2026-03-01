@@ -29,6 +29,7 @@ export async function getExistingBindings(
         port = [int]$info[1]
         hostHeader = if ($info.Length -gt 2) { $info[2] } else { '' }
         thumbprint = $cert
+        sslFlags = [int]$binding.sslFlags
       }
     }
     $bindings | ConvertTo-Json -Compress
@@ -208,4 +209,70 @@ export async function configureBindings(
   }
 
   logger(deployFolder, 'info', 'All bindings configured successfully');
+}
+
+/**
+ * Restores a previously captured set of bindings (used during rollback)
+ */
+export async function restoreBindings(
+  siteName: string,
+  bindings: ExistingBinding[],
+  logger: LoggerFunc,
+  deployFolder: string,
+): Promise<void> {
+  if (bindings.length === 0) {
+    logger(deployFolder, 'info', 'No original bindings to restore');
+    return;
+  }
+
+  logger(deployFolder, 'info', `Restoring ${bindings.length} original binding(s) for site: ${siteName}`);
+
+  await removeAllBindings(siteName, logger, deployFolder);
+
+  for (const binding of bindings) {
+    if (binding.protocol === 'https') {
+      const sslFlags = binding.sslFlags ?? 0;
+      await executePowerShellOrThrow(
+        `
+        Import-Module WebAdministration
+        New-WebBinding -Name '${escapePowerShellString(siteName)}' -Protocol 'https' -Port ${binding.port} -IPAddress '${escapePowerShellString(binding.ipAddress)}' -HostHeader '${escapePowerShellString(binding.hostHeader || '')}' -SslFlags ${sslFlags}
+        Write-Output "HTTPS binding restored"
+        `,
+        logger,
+        deployFolder,
+        DeploymentErrorCodes.IIS_BINDING_CONFIG_FAILED,
+      );
+
+      if (binding.thumbprint) {
+        await executePowerShellOrThrow(
+          `
+          Import-Module WebAdministration
+          $b = Get-WebBinding -Name '${escapePowerShellString(siteName)}' -Protocol 'https' -Port ${binding.port} -HostHeader '${escapePowerShellString(binding.hostHeader || '')}'
+          if ($b) {
+            $b.AddSslCertificate('${escapePowerShellString(binding.thumbprint)}', 'My')
+            Write-Output "SSL certificate restored"
+          } else {
+            throw "Could not find HTTPS binding to restore certificate"
+          }
+          `,
+          logger,
+          deployFolder,
+          DeploymentErrorCodes.IIS_BINDING_CONFIG_FAILED,
+        );
+      }
+    } else {
+      await executePowerShellOrThrow(
+        `
+        Import-Module WebAdministration
+        New-WebBinding -Name '${escapePowerShellString(siteName)}' -Protocol 'http' -Port ${binding.port} -IPAddress '${escapePowerShellString(binding.ipAddress)}' -HostHeader '${escapePowerShellString(binding.hostHeader || '')}'
+        Write-Output "HTTP binding restored"
+        `,
+        logger,
+        deployFolder,
+        DeploymentErrorCodes.IIS_BINDING_CONFIG_FAILED,
+      );
+    }
+  }
+
+  logger(deployFolder, 'info', 'Original bindings restored successfully');
 }

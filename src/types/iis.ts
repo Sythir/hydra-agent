@@ -98,4 +98,5 @@ export interface ExistingBinding {
   ipAddress: string;
   hostHeader: string;
   thumbprint?: string;
+  sslFlags?: number;
 }
