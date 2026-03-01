@@ -9,6 +9,7 @@ export interface IisBinding {
   ipAddress: string; // "*" for all IPs
   hostHeader: string;
   sslCertificateThumbprint?: string; // for HTTPS bindings
+  requireSni?: boolean; // enable Server Name Indication (-SslFlags 1)
 }
 
 export interface IisVirtualDirectory {

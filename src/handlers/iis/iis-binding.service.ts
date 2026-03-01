@@ -125,17 +125,18 @@ export async function addHttpsBinding(
   logger: LoggerFunc,
   deployFolder: string,
 ): Promise<void> {
+  const sslFlags = binding.requireSni ? 1 : 0;
   logger(
     deployFolder,
     'info',
-    `Adding HTTPS binding: ${binding.ipAddress}:${binding.port}:${binding.hostHeader || '(none)'}`,
+    `Adding HTTPS binding: ${binding.ipAddress}:${binding.port}:${binding.hostHeader || '(none)'} (SNI: ${binding.requireSni ? 'enabled' : 'disabled'})`,
   );
 
   // First create the binding
   await executePowerShellOrThrow(
     `
     Import-Module WebAdministration
-    New-WebBinding -Name '${escapePowerShellString(siteName)}' -Protocol 'https' -Port ${binding.port} -IPAddress '${escapePowerShellString(binding.ipAddress)}' -HostHeader '${escapePowerShellString(binding.hostHeader || '')}'
+    New-WebBinding -Name '${escapePowerShellString(siteName)}' -Protocol 'https' -Port ${binding.port} -IPAddress '${escapePowerShellString(binding.ipAddress)}' -HostHeader '${escapePowerShellString(binding.hostHeader || '')}' -SslFlags ${sslFlags}
     Write-Output "HTTPS binding added"
     `,
     logger,
