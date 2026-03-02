@@ -65,6 +65,60 @@ async function enableAuthentication(
 }
 
 /**
+ * Configures the defaultLogonDomain for Basic authentication
+ */
+async function configureBasicAuthCredentials(
+  siteName: string,
+  domain: string,
+  logger: LoggerFunc,
+  deployFolder: string,
+): Promise<void> {
+  logger(deployFolder, 'info', `Configuring Basic auth defaultLogonDomain for site: ${siteName}`);
+
+  await executePowerShellOrThrow(
+    `
+    Import-Module WebAdministration
+    Set-WebConfigurationProperty \`
+      -Filter "/system.webServer/security/authentication/basicAuthentication" \`
+      -Name "defaultLogonDomain" \`
+      -Value '${escapePowerShellString(domain)}' \`
+      -PSPath "IIS:\\" -Location '${escapePowerShellString(siteName)}'
+    Write-Output "Basic auth defaultLogonDomain set to: ${escapePowerShellString(domain)}"
+    `,
+    logger,
+    deployFolder,
+    DeploymentErrorCodes.IIS_AUTH_CONFIG_FAILED,
+  );
+}
+
+/**
+ * Configures Windows authentication domain settings
+ */
+async function configureWindowsAuthDomain(
+  siteName: string,
+  domain: string,
+  logger: LoggerFunc,
+  deployFolder: string,
+): Promise<void> {
+  logger(deployFolder, 'info', `Configuring Windows auth domain settings for site: ${siteName}`);
+
+  await executePowerShellOrThrow(
+    `
+    Import-Module WebAdministration
+    Set-WebConfigurationProperty \`
+      -Filter "/system.webServer/security/authentication/windowsAuthentication" \`
+      -Name "authPersistNonNTLM" \`
+      -Value $false \`
+      -PSPath "IIS:\\" -Location '${escapePowerShellString(siteName)}'
+    Write-Output "Windows auth domain configured: ${escapePowerShellString(domain)}"
+    `,
+    logger,
+    deployFolder,
+    DeploymentErrorCodes.IIS_AUTH_CONFIG_FAILED,
+  );
+}
+
+/**
  * Configures authentication for a website
  */
 export async function configureAuthentication(
@@ -85,6 +139,14 @@ export async function configureAuthentication(
 
   // Then enable the specified authentication type
   await enableAuthentication(siteName, authConfig.type, logger, deployFolder);
+
+  if (authConfig.type === 'basic' && authConfig.domain) {
+    await configureBasicAuthCredentials(siteName, authConfig.domain, logger, deployFolder);
+  }
+
+  if (authConfig.type === 'windows' && authConfig.domain) {
+    await configureWindowsAuthDomain(siteName, authConfig.domain, logger, deployFolder);
+  }
 
   logger(deployFolder, 'info', `Authentication configured successfully: ${authConfig.type}`);
 }

@@ -11,7 +11,7 @@ import { ExecutionResultReturnType } from '../../types/ExecutionResultReturnType
 
 import { checkIisAvailable } from './powershell.service';
 import { ensureAppPool, stopAppPool, startAppPool, deleteAppPool, appPoolExists } from './iis-app-pool.service';
-import { ensureSite, stopSite, startSite, deleteSite, siteExists, getSiteConfig, deleteVirtualDirectory, updateSitePhysicalPath, setSiteAppPool } from './iis-site.service';
+import { ensureSite, stopSite, startSite, deleteSite, siteExists, getSiteConfig, deleteVirtualDirectory, updateSitePhysicalPath, setSiteAppPool, validateSiteExists } from './iis-site.service';
 import { configureBindings, getExistingBindings, restoreBindings } from './iis-binding.service';
 import { configureAuthentication } from './iis-auth.service';
 import { deployConfigFiles } from './iis-config.service';
@@ -89,6 +89,11 @@ export async function handleIisDeployment(
       return { succeeded: false, output: 'IIS is not available' };
     }
     logger(deployFolder, 'info', 'IIS availability confirmed');
+
+    // Validate site exists before making any changes (only when not allowed to create)
+    if (!message.site.createIfNotExists) {
+      await validateSiteExists(message.site.name, logger, deployFolder);
+    }
 
     // Step 2: Download and extract application package (20%)
     emitProgress(socket, deploymentId, 'downloading', 'Downloading application package...', 10);

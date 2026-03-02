@@ -4,6 +4,35 @@ import { DeploymentErrorCodes } from '../../types/DeploymentError';
 import { executePowerShellOrThrow, escapePowerShellString } from './powershell.service';
 
 /**
+ * Validates that a website exists using Get-Website, throwing a descriptive error if it does not.
+ * Use this for early-exit checks before any modifications are made.
+ */
+export async function validateSiteExists(
+  siteName: string,
+  logger: LoggerFunc,
+  deployFolder: string,
+): Promise<void> {
+  const result = await executePowerShellOrThrow(
+    `
+    Import-Module WebAdministration
+    $site = Get-Website -Name '${escapePowerShellString(siteName)}'
+    if ($site) {
+      Write-Output "EXISTS"
+    } else {
+      Write-Output "NOT_EXISTS"
+    }
+    `,
+    logger,
+    deployFolder,
+    DeploymentErrorCodes.IIS_SITE_CONFIG_FAILED,
+  );
+
+  if (!result.includes('EXISTS') || result.includes('NOT_EXISTS')) {
+    throw new Error(`IIS site '${siteName}' does not exist and createIfNotExists is false`);
+  }
+}
+
+/**
  * Checks if a website exists
  */
 export async function siteExists(

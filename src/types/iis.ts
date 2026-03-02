@@ -33,6 +33,8 @@ export interface IisAppPoolConfig {
   managedPipelineMode: 'Integrated' | 'Classic';
   idleTimeout: number; // minutes
   startMode: 'OnDemand' | 'AlwaysRunning';
+  username?: string; // Only for identity = "SpecificUser"
+  password?: string; // Only for identity = "SpecificUser"
 }
 
 export interface IisAuthenticationConfig {

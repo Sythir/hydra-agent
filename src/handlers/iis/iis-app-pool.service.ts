@@ -114,6 +114,11 @@ async function configureAppPoolIdentity(
   const identityType = identityTypeMap[config.identity] ?? 4; // Default to ApplicationPoolIdentity
   commands.push(`Set-ItemProperty '${appPoolPath}' -Name "processModel.identityType" -Value ${identityType}`);
 
+  if (config.identity === 'SpecificUser') {
+    commands.push(`Set-ItemProperty '${appPoolPath}' -Name "processModel.userName" -Value '${escapePowerShellString(config.username ?? '')}'`);
+    commands.push(`Set-ItemProperty '${appPoolPath}' -Name "processModel.password" -Value '${escapePowerShellString(config.password ?? '')}'`);
+  }
+
   logger(deployFolder, 'info', `Setting app pool identity to: ${config.identity}`);
 }
 
