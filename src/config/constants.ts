@@ -1,3 +1,6 @@
+import os from 'os';
+import path from 'path';
+
 export const DEFAULT_KEEP_DEPLOYMENTS = 5;
 export const DEFAULT_DEPLOY_TIMEOUT_SECONDS = 300;
 
@@ -17,6 +20,7 @@ export const SOCKET_EVENTS = {
   VERSION_STATUS: 'version-status',
   LOG: 'log',
   AGENT_UPDATE_STATUS: 'agent-update-status',
+  IIS_DEPLOYMENT_PROGRESS: 'iis-deployment-progress',
 } as const;
 
-export const DEPLOY_FOLDER_NAME = 'HydraDeploys';
+export const DEPLOYMENT_FOLDER_NAME = path.join(os.homedir(), 'HydraDeploys');

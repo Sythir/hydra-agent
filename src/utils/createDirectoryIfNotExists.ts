@@ -10,11 +10,9 @@ export const createDirectoryIfNotExists = (directory: string, logger: LoggerFunc
       return { succeeded: true };
     } catch (err) {
       logger('_logs', 'error', `Error creating directory: ${err}`);
-
       return { succeeded: false };
     }
   }
 
-  logger('_logs', 'info', `Directory already exists: ${directory}`);
   return { succeeded: true };
 };
