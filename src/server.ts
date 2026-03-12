@@ -1,23 +1,42 @@
 import { io } from 'socket.io-client';
 import os from 'os';
-import { handleDeployment } from './handleDeployment';
+import { handleIisDeployment } from './handlers/iis';
+import { handleK8sDeployment } from './handlers/k8s/k8s-deployment.handler';
 import { createLogger } from './utils/logMessage';
-import { loadEnvironmentConfig, parseKeepDeployments, parseDeployTimeout } from './config/environment';
+import {
+  loadEnvironmentConfig,
+  parseKeepDeployments,
+  parseDeployTimeout,
+  parseDeploymentDirectory,
+} from './config/environment';
 import { DEPLOYMENT_STATUS, SOCKET_EVENTS } from './config/constants';
 import { handleAgentUpdate, signalHealthy, isPostUpdateStartup } from './update';
 import { AgentUpdateMessage, UPDATE_STATUS } from './types/update';
+import { K8sDeploymentMessageDto } from './types/step-types/k8s';
+import { createDeploymentFolder } from './utils/createDeploymentFolder';
+import { Message } from './types/DeploymentMessage';
+import { ScriptDeploymentMessageDto } from './types/step-types/script';
+import { IisDeploymentMessageDto } from './types/step-types/iis';
+import { createDirectoryIfNotExists } from './utils/createDirectoryIfNotExists';
+import { handleScriptDeployment } from './handlers/script/script-deployment.handler';
+import { HandlerContext } from './types/HandlerContext';
 
 const args = process.argv.slice(2);
 const config = loadEnvironmentConfig(args);
 const keepDeployments = parseKeepDeployments(args);
 const deployTimeout = parseDeployTimeout(args);
+const deploymentDirectory = parseDeploymentDirectory(args);
 
 process.env.DEPLOY_TIMEOUT_IN_SECONDS = deployTimeout.toString();
+if (deploymentDirectory) {
+  process.env.DEPLOYMENT_DIRECTORY = deploymentDirectory;
+}
 
 console.log(`Agent Key: ${config.agentKey.slice(0, 5)}... (partially shown)`);
 console.log(`Agent Version: ${config.agentVersion}`);
 console.log(`Keep Deployments: ${keepDeployments}`);
 console.log(`Deploy Timeout: ${deployTimeout}s`);
+console.log(`Deployment Directory: ${deploymentDirectory || 'default'}`);
 
 const socket = io(config.host, {
   query: { token: config.agentKey, type: 'agent' },
@@ -81,38 +100,6 @@ const queue: Message[] = [];
 let isProcessing = false;
 let processingItem: Message | null = null;
 
-export interface AgentDeployMessageDto {
-  deployment: { id: string };
-  script: string;
-  application: {
-    id: string;
-    name: string;
-    code: string;
-    appId: string;
-    registry: {
-      name: string;
-      url: string;
-      type: string;
-    };
-  };
-  project: { id: string; name: string; code: string };
-  environment: { id: string; name: string };
-  version: { id: string; version: string };
-  config: { type: string; data: string; name: string }[];
-}
-
-interface Step {
-  id: string;
-  name: string;
-  type: string;
-  message: AgentDeployMessageDto | null;
-}
-
-interface Message {
-  id: string;
-  steps: Step[];
-}
-
 socket.on(`deploy-version-${config.agentKey}`, async (data: Message) => {
   const queueIndex = queue.findIndex((item) => item.id === data.id);
 
@@ -159,7 +146,7 @@ async function processQueue() {
   const data = queue.shift()!;
   processingItem = data;
   try {
-    console.log('version status: in-progress', data);
+    console.log('version status: in-progress', JSON.stringify(data, null, 2));
     socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
       status: DEPLOYMENT_STATUS.IN_PROGRESS,
       deploymentId: data.id,
@@ -167,10 +154,44 @@ async function processQueue() {
 
     const logger = createLogger(data.id, socket);
     let isFailed = false;
+    const deploymentFolder = createDeploymentFolder(logger, data);
+
+    if (deploymentFolder === null || !createDirectoryIfNotExists(deploymentFolder, logger))
+      return { output: `Error creating folder: ${deploymentFolder}`, succeeded: false };
+
+    const context: HandlerContext = {
+      deploymentMessage: data,
+      logger,
+      deploymentFolder,
+      operatingSystem,
+      keepDeployments,
+      socket,
+    };
+
     for (const step of data.steps) {
       if ((step.type === 'script' || step.type === 'derived') && step.message) {
-        const deployScriptOutput = await handleDeployment(step.message, operatingSystem, keepDeployments, logger);
+        const deployScriptOutput = await handleScriptDeployment(step.message as ScriptDeploymentMessageDto, context);
         if (!deployScriptOutput.succeeded) {
+          console.error(`Script deployment failed for step "${step.name}":`, deployScriptOutput.output);
+          isFailed = true;
+          break;
+        }
+      } else if (step.type === 'IIS' && step.message) {
+        if (operatingSystem !== 'windows') {
+          logger('.', 'error', 'IIS deployments are only supported on Windows');
+          isFailed = true;
+          break;
+        }
+        const iisDeployOutput = await handleIisDeployment(step.message as IisDeploymentMessageDto, context);
+        if (!iisDeployOutput.succeeded) {
+          console.error(`IIS deployment failed for step "${step.name}":`, iisDeployOutput.output);
+          isFailed = true;
+          break;
+        }
+      } else if (step.type === 'K8s' && step.message) {
+        const k8sDeployOutput = await handleK8sDeployment(step.message as K8sDeploymentMessageDto, context);
+        if (!k8sDeployOutput.succeeded) {
+          console.error(`K8s deployment failed for step "${step.name}":`, k8sDeployOutput.output);
           isFailed = true;
           break;
         }
@@ -187,6 +208,10 @@ async function processQueue() {
     processQueue();
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`Deployment ${data.id} threw an unhandled error:`, errorMessage);
+    if (error instanceof Error && error.stack) {
+      console.error(error.stack);
+    }
     socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
       status: DEPLOYMENT_STATUS.ERROR,
       deploymentId: data.id,

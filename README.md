@@ -220,11 +220,12 @@ Start-ScheduledTask -TaskName "HydraAgent"
 
 ### Command Line Arguments
 
-| Argument                 | Required | Description                                        |
-| ------------------------ | -------- | -------------------------------------------------- |
-| `--agent-key <key>`      | Yes      | Your agent authentication key                      |
-| `--keep-deployments <n>` | No       | Number of old deployments to keep (default: 5)     |
-| `--timeout <n>`          | No       | Deployment script timeout in seconds (default: 60) |
+| Argument                   | Required | Description                                                    |
+| -------------------------- | -------- | -------------------------------------------------------------- |
+| `--agent-key <key>`        | Yes      | Your agent authentication key                                  |
+| `--keep-deployments <n>`   | No       | Number of old deployments to keep (default: 5)                 |
+| `--timeout <n>`            | No       | Deployment script timeout in seconds (default: 60)             |
+| `--deployment-dir <dir>`   | No       | Custom directory for deployments (default: ~/HydraDeploys)     |
 
 ### Optional Environment Variables
 
@@ -232,6 +233,7 @@ Start-ScheduledTask -TaskName "HydraAgent"
 | --------------------------- | ------------------------------------------------- | ------------------------------------ |
 | `HOST`                      | `https://hydra.sythir.com/api/deployment-gateway` | Gateway URL                          |
 | `AGENT_HOME`                | `~/HydraAgent`                                    | Agent installation directory         |
+| `DEPLOYMENT_DIRECTORY`      | `~/HydraDeploys`                                  | Custom directory for deployments     |
 | `DEPLOY_LOGS_DIRECTORY`     | -                                                 | Custom directory for deployment logs |
 | `DEPLOY_TIMEOUT_IN_SECONDS` | `60`                                              | Deployment script timeout            |
 
@@ -239,10 +241,10 @@ Start-ScheduledTask -TaskName "HydraAgent"
 
 ```bash
 # Linux
-~/HydraAgent/launcher.sh --agent-key abc123 --keep-deployments 10 --timeout 120
+~/HydraAgent/launcher.sh --agent-key abc123 --keep-deployments 10 --timeout 120 --deployment-dir /var/deployments
 
 # Windows
-& "$env:USERPROFILE\HydraAgent\launcher.ps1" --agent-key abc123 --keep-deployments 10 --timeout 120
+& "$env:USERPROFILE\HydraAgent\launcher.ps1" --agent-key abc123 --keep-deployments 10 --timeout 120 --deployment-dir "C:\Deployments"
 ```
 
 ---
