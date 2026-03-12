@@ -4,7 +4,7 @@ set -e
 # Hydra Agent Launcher Script
 # Manages the agent process, handles updates, and performs rollbacks
 
-AGENT_HOME="${AGENT_HOME:-$HOME/HydraAgent}"
+AGENT_HOME="${AGENT_HOME:-$(dirname "$(realpath "$0")")}"
 CURRENT_DIR="$AGENT_HOME/current"
 BACKUP_DIR="$AGENT_HOME/backup"
 UPDATE_DIR="$AGENT_HOME/update"

@@ -10,7 +10,7 @@ param(
     [string[]]$AgentArgs
 )
 
-$AgentHome = if ($env:AGENT_HOME) { $env:AGENT_HOME } else { Join-Path $env:USERPROFILE "HydraAgent" }
+$AgentHome = if ($env:AGENT_HOME) { $env:AGENT_HOME } else { $PSScriptRoot }
 $CurrentDir = Join-Path $AgentHome "current"
 $BackupDir = Join-Path $AgentHome "backup"
 $UpdateDir = Join-Path $AgentHome "update"
