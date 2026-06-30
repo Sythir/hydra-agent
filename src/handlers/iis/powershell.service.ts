@@ -9,13 +9,6 @@ export interface PowerShellResult {
   exitCode: number | null;
 }
 
-/**
- * Executes a PowerShell command and returns the result
- * @param command The PowerShell command to execute
- * @param logger Logger function for output
- * @param deployFolder Folder path for logging context
- * @param timeoutMs Timeout in milliseconds (default: 60000)
- */
 export async function executePowerShell(
   command: string,
   logger: LoggerFunc,
@@ -23,8 +16,6 @@ export async function executePowerShell(
   timeoutMs: number = 60000,
 ): Promise<PowerShellResult> {
   return new Promise((resolve) => {
-    // Wrap command in try-catch for better error handling
-    // $ErrorActionPreference = "Stop" converts all errors to terminating exceptions
     const wrappedCommand = `
       $ErrorActionPreference = "Stop"
       try {
@@ -51,7 +42,6 @@ export async function executePowerShell(
         try {
           process.kill(childProcess.pid, 'SIGKILL');
         } catch {
-          // Process may have already exited
         }
       }
       logger(deployFolder, 'error', `PowerShell command timed out after ${timeoutMs / 1000} seconds`);
@@ -98,9 +88,6 @@ export async function executePowerShell(
   });
 }
 
-/**
- * Executes a PowerShell command and throws on failure
- */
 export async function executePowerShellOrThrow(
   command: string,
   logger: LoggerFunc,
@@ -116,9 +103,6 @@ export async function executePowerShellOrThrow(
   return result.stdout;
 }
 
-/**
- * Checks if IIS WebAdministration module is available
- */
 export async function checkIisAvailable(logger: LoggerFunc, deployFolder: string): Promise<boolean> {
   const result = await executePowerShell(
     `
@@ -132,17 +116,10 @@ export async function checkIisAvailable(logger: LoggerFunc, deployFolder: string
   return result.success && result.stdout.includes('IIS_AVAILABLE');
 }
 
-/**
- * Escapes a string for safe use in PowerShell
- */
 export function escapePowerShellString(value: string): string {
-  // Escape single quotes by doubling them
   return value.replace(/'/g, "''");
 }
 
-/**
- * Generates a PowerShell script file content with proper error handling
- */
 export function generatePowerShellScript(commands: string[]): string {
   return `
 $ErrorActionPreference = "Stop"

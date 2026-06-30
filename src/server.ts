@@ -1,7 +1,7 @@
 import { io } from 'socket.io-client';
 import os from 'os';
+import { handleDeployment } from './handleDeployment';
 import { handleIisDeployment } from './handlers/iis';
-import { handleK8sDeployment } from './handlers/k8s/k8s-deployment.handler';
 import { createLogger } from './utils/logMessage';
 import {
   loadEnvironmentConfig,
@@ -12,14 +12,8 @@ import {
 import { DEPLOYMENT_STATUS, SOCKET_EVENTS } from './config/constants';
 import { handleAgentUpdate, signalHealthy, isPostUpdateStartup } from './update';
 import { AgentUpdateMessage, UPDATE_STATUS } from './types/update';
-import { K8sDeploymentMessageDto } from './types/step-types/k8s';
-import { createDeploymentFolder } from './utils/createDeploymentFolder';
-import { Message } from './types/DeploymentMessage';
-import { ScriptDeploymentMessageDto } from './types/step-types/script';
-import { IisDeploymentMessageDto } from './types/step-types/iis';
-import { createDirectoryIfNotExists } from './utils/createDirectoryIfNotExists';
-import { handleScriptDeployment } from './handlers/script/script-deployment.handler';
-import { HandlerContext } from './types/HandlerContext';
+import { IisDeploymentMessageDto } from './types/iis';
+import * as processManager from './utils/processManager';
 
 const args = process.argv.slice(2);
 const config = loadEnvironmentConfig(args);
@@ -49,7 +43,6 @@ socket.on(SOCKET_EVENTS.CONNECT, async () => {
   console.log('Connected to the Socket.IO server');
   socket.emit(SOCKET_EVENTS.REGISTER_KEY, { version: config.agentVersion, os: operatingSystem });
 
-  // Signal health after successful connection (for post-update health check)
   if (isPostUpdateStartup()) {
     try {
       await signalHealthy();
@@ -67,7 +60,6 @@ socket.on(SOCKET_EVENTS.DISCONNECT, () => {
 socket.on(`agent-update-${config.agentKey}`, async (data: AgentUpdateMessage) => {
   console.log('Received update command:', data);
 
-  // Don't process update if we're currently deploying
   if (isProcessing) {
     socket.emit(SOCKET_EVENTS.AGENT_UPDATE_STATUS, {
       updateId: data.updateId,
@@ -100,6 +92,38 @@ const queue: Message[] = [];
 let isProcessing = false;
 let processingItem: Message | null = null;
 
+export interface AgentDeployMessageDto {
+  deployment: { id: string };
+  script: string;
+  application: {
+    id: string;
+    name: string;
+    code: string;
+    appId: string;
+    registry: {
+      name: string;
+      url: string;
+      type: string;
+    };
+  };
+  project: { id: string; name: string; code: string };
+  environment: { id: string; name: string };
+  version: { id: string; version: string };
+  config: { type: string; data: string; name: string }[];
+}
+
+interface Step {
+  id: string;
+  name: string;
+  type: string;
+  message: AgentDeployMessageDto | IisDeploymentMessageDto | null;
+}
+
+interface Message {
+  id: string;
+  steps: Step[];
+}
+
 socket.on(`deploy-version-${config.agentKey}`, async (data: Message) => {
   const queueIndex = queue.findIndex((item) => item.id === data.id);
 
@@ -114,6 +138,21 @@ socket.on(`deploy-version-${config.agentKey}`, async (data: Message) => {
   });
   if (!isProcessing) {
     processQueue();
+  }
+});
+
+socket.on(`cancel-deployment-${config.agentKey}`, async (deploymentId: string) => {
+  if (processManager.requestCancel(deploymentId)) {
+    return;
+  }
+
+  const idx = queue.findIndex((item) => item.id === deploymentId);
+  if (idx > -1) {
+    queue.splice(idx, 1);
+    socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
+      status: DEPLOYMENT_STATUS.CANCELLED,
+      deploymentId,
+    });
   }
 });
 
@@ -145,6 +184,7 @@ async function processQueue() {
   isProcessing = true;
   const data = queue.shift()!;
   processingItem = data;
+  processManager.setActiveDeployment(data.id);
   try {
     console.log('version status: in-progress', JSON.stringify(data, null, 2));
     socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
@@ -154,23 +194,14 @@ async function processQueue() {
 
     const logger = createLogger(data.id, socket);
     let isFailed = false;
-    const deploymentFolder = createDeploymentFolder(logger, data);
-
-    if (deploymentFolder === null || !createDirectoryIfNotExists(deploymentFolder, logger))
-      return { output: `Error creating folder: ${deploymentFolder}`, succeeded: false };
-
-    const context: HandlerContext = {
-      deploymentMessage: data,
-      logger,
-      deploymentFolder,
-      operatingSystem,
-      keepDeployments,
-      socket,
-    };
-
     for (const step of data.steps) {
       if ((step.type === 'script' || step.type === 'derived') && step.message) {
-        const deployScriptOutput = await handleScriptDeployment(step.message as ScriptDeploymentMessageDto, context);
+        const deployScriptOutput = await handleDeployment(
+          step.message as AgentDeployMessageDto,
+          operatingSystem,
+          keepDeployments,
+          logger,
+        );
         if (!deployScriptOutput.succeeded) {
           console.error(`Script deployment failed for step "${step.name}":`, deployScriptOutput.output);
           isFailed = true;
@@ -182,16 +213,9 @@ async function processQueue() {
           isFailed = true;
           break;
         }
-        const iisDeployOutput = await handleIisDeployment(step.message as IisDeploymentMessageDto, context);
+        const iisDeployOutput = await handleIisDeployment(step.message as IisDeploymentMessageDto, logger, socket, keepDeployments);
         if (!iisDeployOutput.succeeded) {
           console.error(`IIS deployment failed for step "${step.name}":`, iisDeployOutput.output);
-          isFailed = true;
-          break;
-        }
-      } else if (step.type === 'K8s' && step.message) {
-        const k8sDeployOutput = await handleK8sDeployment(step.message as K8sDeploymentMessageDto, context);
-        if (!k8sDeployOutput.succeeded) {
-          console.error(`K8s deployment failed for step "${step.name}":`, k8sDeployOutput.output);
           isFailed = true;
           break;
         }
@@ -199,11 +223,19 @@ async function processQueue() {
         console.log('Send server api call to execute step with id ' + step.id);
       }
     }
-    console.log('sending status', isFailed ? 'error' : 'success');
+    const wasCancelled = processManager.isCancelled(data.id);
+    const finalStatus = wasCancelled
+      ? DEPLOYMENT_STATUS.CANCELLED
+      : isFailed
+        ? DEPLOYMENT_STATUS.ERROR
+        : DEPLOYMENT_STATUS.SUCCESS;
+    console.log('sending status', finalStatus);
     socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
-      status: isFailed ? DEPLOYMENT_STATUS.ERROR : DEPLOYMENT_STATUS.SUCCESS,
+      status: finalStatus,
       deploymentId: data.id,
     });
+    processManager.clearCancelled(data.id);
+    processManager.clearActive();
 
     processQueue();
   } catch (error) {
@@ -212,11 +244,14 @@ async function processQueue() {
     if (error instanceof Error && error.stack) {
       console.error(error.stack);
     }
+    const status = processManager.isCancelled(data.id) ? DEPLOYMENT_STATUS.CANCELLED : DEPLOYMENT_STATUS.ERROR;
     socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
-      status: DEPLOYMENT_STATUS.ERROR,
+      status,
       deploymentId: data.id,
       output: errorMessage,
     });
+    processManager.clearCancelled(data.id);
+    processManager.clearActive();
 
     processQueue();
   }

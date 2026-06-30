@@ -1,11 +1,8 @@
+import { IisAppPoolConfig } from '../../types/iis';
 import { LoggerFunc } from '../../utils/logMessage';
 import { DeploymentErrorCodes } from '../../types/DeploymentError';
 import { executePowerShellOrThrow, escapePowerShellString } from './powershell.service';
-import { IisAppPoolConfig } from '../../types/step-types/iis';
 
-/**
- * Checks if an application pool exists
- */
 export async function appPoolExists(
   appPoolName: string,
   logger: LoggerFunc,
@@ -26,9 +23,6 @@ export async function appPoolExists(
   return result.includes('EXISTS') && !result.includes('NOT_EXISTS');
 }
 
-/**
- * Creates a new application pool
- */
 export async function createAppPool(
   appPoolName: string,
   logger: LoggerFunc,
@@ -47,9 +41,6 @@ export async function createAppPool(
   );
 }
 
-/**
- * Configures an application pool with the specified settings
- */
 export async function configureAppPool(
   config: IisAppPoolConfig,
   logger: LoggerFunc,
@@ -58,41 +49,31 @@ export async function configureAppPool(
   const appPoolPath = `IIS:\\AppPools\\${escapePowerShellString(config.name)}`;
   logger(deployFolder, 'info', `Configuring application pool: ${config.name}`);
 
-  // Build configuration commands
   const commands: string[] = [
     `Import-Module WebAdministration`,
     `$appPoolPath = '${appPoolPath}'`,
   ];
 
-  // Set managed runtime version (empty string for .NET Core/no managed code)
   commands.push(
     `Set-ItemProperty $appPoolPath -Name "managedRuntimeVersion" -Value '${escapePowerShellString(config.managedRuntimeVersion)}'`,
   );
 
-  // Set managed pipeline mode (0 = Integrated, 1 = Classic)
   const pipelineMode = config.managedPipelineMode === 'Integrated' ? 0 : 1;
   commands.push(`Set-ItemProperty $appPoolPath -Name "managedPipelineMode" -Value ${pipelineMode}`);
 
-  // Set idle timeout
   commands.push(
     `Set-ItemProperty $appPoolPath -Name "processModel.idleTimeout" -Value ([TimeSpan]::FromMinutes(${config.idleTimeout}))`,
   );
 
-  // Set start mode (0 = OnDemand, 1 = AlwaysRunning)
   const startMode = config.startMode === 'AlwaysRunning' ? 1 : 0;
   commands.push(`Set-ItemProperty $appPoolPath -Name "startMode" -Value ${startMode}`);
 
-  // Configure identity
   await configureAppPoolIdentity(config, commands, logger, deployFolder);
 
-  // Execute all configuration commands
   const script = commands.join('\n') + '\nWrite-Output "App pool configured successfully"';
   await executePowerShellOrThrow(script, logger, deployFolder, DeploymentErrorCodes.IIS_APP_POOL_CONFIG_FAILED);
 }
 
-/**
- * Configures the application pool identity based on the identity type
- */
 async function configureAppPoolIdentity(
   config: IisAppPoolConfig,
   commands: string[],
@@ -101,8 +82,6 @@ async function configureAppPoolIdentity(
 ): Promise<void> {
   const appPoolPath = `IIS:\\AppPools\\${escapePowerShellString(config.name)}`;
 
-  // Identity type mapping:
-  // 0 = LocalSystem, 1 = LocalService, 2 = NetworkService, 3 = SpecificUser, 4 = ApplicationPoolIdentity
   const identityTypeMap: Record<string, number> = {
     LocalSystem: 0,
     LocalService: 1,
@@ -111,7 +90,7 @@ async function configureAppPoolIdentity(
     ApplicationPoolIdentity: 4,
   };
 
-  const identityType = identityTypeMap[config.identity] ?? 4; // Default to ApplicationPoolIdentity
+  const identityType = identityTypeMap[config.identity] ?? 4;
   commands.push(`Set-ItemProperty '${appPoolPath}' -Name "processModel.identityType" -Value ${identityType}`);
 
   if (config.identity === 'SpecificUser') {
@@ -122,9 +101,6 @@ async function configureAppPoolIdentity(
   logger(deployFolder, 'info', `Setting app pool identity to: ${config.identity}`);
 }
 
-/**
- * Stops an application pool
- */
 export async function stopAppPool(
   appPoolName: string,
   logger: LoggerFunc,
@@ -148,9 +124,6 @@ export async function stopAppPool(
   );
 }
 
-/**
- * Starts an application pool
- */
 export async function startAppPool(
   appPoolName: string,
   logger: LoggerFunc,
@@ -174,9 +147,6 @@ export async function startAppPool(
   );
 }
 
-/**
- * Deletes an application pool
- */
 export async function deleteAppPool(
   appPoolName: string,
   logger: LoggerFunc,
@@ -200,9 +170,6 @@ export async function deleteAppPool(
   );
 }
 
-/**
- * Ensures an application pool exists (creates if needed) and configures it
- */
 export async function ensureAppPool(
   config: IisAppPoolConfig,
   logger: LoggerFunc,

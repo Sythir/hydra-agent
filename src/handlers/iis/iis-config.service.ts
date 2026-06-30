@@ -1,9 +1,9 @@
 import fs from 'fs';
 import path from 'path';
+import { IisConfigFile } from '../../types/iis';
 import { LoggerFunc } from '../../utils/logMessage';
 import { DeploymentError, DeploymentErrorCodes } from '../../types/DeploymentError';
-import { IisConfigFile } from '../../types/step-types/iis';
-import { configMerger } from '../../config-merger';
+import { configMerger } from '@sythir/config-merger';
 
 export async function deployConfigFile(
   config: IisConfigFile,

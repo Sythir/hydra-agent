@@ -1,0 +1,151 @@
+import fs from 'fs';
+import { Data } from './types/data';
+import { createDeployHash } from './utils/createDeployHash';
+import os from 'os';
+import path from 'path';
+import { LoggerFunc } from './utils/logMessage';
+import { execSync, spawn } from 'child_process';
+import { createDirectoryIfNotExists } from './utils/createDirectoryIfNotExists';
+import { cleanupOldDeployments } from './utils/CleanupOldDeployments';
+import { ExecutionResultReturnType } from './types/ExecutionResultReturnType';
+import { downloadNugetPackage, unzipPackage } from './utils/IISUtils';
+import { DEFAULT_DEPLOY_TIMEOUT_SECONDS, DEPLOYMENT_FOLDER_NAME } from './config/constants';
+import { killProcessTree, setActiveChild } from './utils/processManager';
+
+async function runDeployScript(
+  deployScript: string,
+  deployFolderName: string,
+  logger: LoggerFunc,
+): Promise<ExecutionResultReturnType> {
+  const timeout = Number(process.env.DEPLOY_TIMEOUT_IN_SECONDS || DEFAULT_DEPLOY_TIMEOUT_SECONDS) * 1000;
+
+  logger(deployFolderName, 'info', `Starting deploy script execution`);
+
+  return new Promise((resolve) => {
+    const childProcess = spawn(deployScript, {
+      shell: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: deployFolderName,
+      detached: process.platform !== 'win32',
+    });
+
+    setActiveChild(childProcess);
+
+    let stdoutData = '';
+    let stderrData = '';
+    let hasTimedOut = false;
+
+    const timeoutId = setTimeout(() => {
+      hasTimedOut = true;
+
+      killProcessTree(childProcess);
+
+      logger(
+        deployFolderName,
+        'error',
+        `Deploy script execution timed out after ${timeout / 1000} seconds. If this timeout is too short, you can increase it in the env variables`,
+      );
+      resolve({ succeeded: false });
+    }, timeout);
+
+    childProcess.stdout.on('data', (data) => {
+      const output = data.toString();
+      stdoutData += output;
+      logger(deployFolderName, 'info', output);
+    });
+
+    childProcess.stderr.on('data', (data) => {
+      const output = data.toString();
+      stderrData += output;
+      logger(deployFolderName, 'error', output);
+    });
+
+    childProcess.on('close', (code) => {
+      clearTimeout(timeoutId);
+      setActiveChild(null);
+
+      if (hasTimedOut) {
+        return;
+      }
+
+      if (code === 0) {
+        logger(deployFolderName, 'info', `Deploy script completed successfully with exit code ${code}`);
+        resolve({ succeeded: true });
+      } else {
+        logger(deployFolderName, 'error', `Deploy script exited with code ${code}`);
+        resolve({ succeeded: false });
+      }
+    });
+
+    childProcess.on('error', (error) => {
+      clearTimeout(timeoutId);
+      setActiveChild(null);
+      logger(deployFolderName, 'error', `Deploy script execution error: ${error.message}`);
+      resolve({ succeeded: false });
+    });
+  });
+}
+
+export const handleDeployment = async (
+  data: Data,
+  operatingSystem: 'windows' | 'linux',
+  keepDeployments: number,
+  logger: LoggerFunc,
+): Promise<ExecutionResultReturnType> => {
+  const { script } = data;
+  if (!script) return { succeeded: false };
+
+  const folderLocation = path.join(process.env.DEPLOYMENT_DIRECTORY || DEPLOYMENT_FOLDER_NAME);
+  if (!createDirectoryIfNotExists(folderLocation, logger))
+    return { output: `Error creating folder: ${folderLocation}`, succeeded: false };
+
+  const uniqueHash = createDeployHash();
+  const deployFolderName = path.join(
+    folderLocation,
+    data.project.code,
+    data.application.code,
+    data.environment.name,
+    `${data.version.version}-${uniqueHash}`,
+  );
+
+  if (!createDirectoryIfNotExists(deployFolderName, logger))
+    return { output: `Error creating folder: ${deployFolderName}`, succeeded: false };
+  let deployScriptOutput: ExecutionResultReturnType = { output: 'Script did not execute', succeeded: false };
+
+  if (operatingSystem === 'windows') {
+    const scriptPath = path.join(deployFolderName, 'deploy-script.ps1');
+    fs.writeFileSync(scriptPath, script);
+
+    if (data.application.registry.type === 'nuget') {
+      const downloadUrl = `${data.application.registry.url}/package/${data.application.appId}/${data.version.version}`;
+      try {
+        await downloadNugetPackage(downloadUrl, deployFolderName);
+      } catch (e) {
+        console.error(e);
+        logger(deployFolderName, 'error', 'Failed to download the Nuget packages from: ' + downloadUrl);
+        return { succeeded: false };
+      }
+
+      try {
+        const zipPath = path.join(deployFolderName, 'app.zip');
+        await unzipPackage(zipPath, deployFolderName);
+      } catch (e) {
+        console.error(e);
+        logger(deployFolderName, 'error', 'Failed to extract files from .zip');
+        return { succeeded: false };
+      }
+    }
+
+    logger(deployFolderName, 'info', `Deploy script written to ${scriptPath}`);
+    deployScriptOutput = await runDeployScript(`powershell.exe -File "${scriptPath}"`, deployFolderName, logger);
+  } else {
+    const scriptPath = path.join(deployFolderName, 'deploy-script.sh');
+    fs.writeFileSync(scriptPath, script);
+    execSync(`chmod +x "${scriptPath}"`);
+    logger(deployFolderName, 'info', `Deploy script written to ${scriptPath}`);
+
+    deployScriptOutput = await runDeployScript(`sh "${scriptPath}"`, deployFolderName, logger);
+    await cleanupOldDeployments(deployFolderName, path.dirname(deployFolderName), keepDeployments, logger);
+  }
+  return { succeeded: deployScriptOutput.succeeded };
+};

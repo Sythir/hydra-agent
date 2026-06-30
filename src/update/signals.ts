@@ -23,7 +23,6 @@ export async function releaseUpdateLock(): Promise<void> {
   try {
     await fs.unlink(PATHS.UPDATE_LOCK);
   } catch {
-    // Ignore if doesn't exist
   }
 }
 
@@ -33,8 +32,6 @@ export async function writeRestartSignal(
 ): Promise<void> {
   await fs.mkdir(path.dirname(PATHS.RESTART_SIGNAL), { recursive: true });
 
-  // First line is binary path (for launcher to read)
-  // Rest is metadata
   const content = [
     newBinaryPath,
     `version=${targetVersion}`,

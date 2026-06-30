@@ -1,7 +1,5 @@
-// Main handler
 export { handleIisDeployment } from './iis-deployment.handler';
 
-// Services
 export * from './powershell.service';
 export * from './iis-app-pool.service';
 export * from './iis-site.service';

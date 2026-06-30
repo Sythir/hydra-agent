@@ -9,6 +9,7 @@ export const DEPLOYMENT_STATUS = {
   IN_PROGRESS: 'in-progress',
   SUCCESS: 'success',
   ERROR: 'error',
+  CANCELLED: 'cancelled',
 } as const;
 
 export type DeploymentStatus = typeof DEPLOYMENT_STATUS[keyof typeof DEPLOYMENT_STATUS];

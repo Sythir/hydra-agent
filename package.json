@@ -15,9 +15,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@kubernetes/client-node": "^1.4.0",
+    "@sythir/config-merger": "workspace:*",
     "socket.io-client": "^4.8.1",
-    "fast-xml-parser": "^5.3.6",
     "unzipper": "^0.12.3"
   },
   "devDependencies": {
