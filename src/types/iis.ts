@@ -1,20 +1,15 @@
-/**
- * IIS Deployment Message Types
- * Defines the structure of messages received from the backend for IIS deployments
- */
-
 export interface IisBinding {
   protocol: 'http' | 'https';
   port: number;
-  ipAddress: string; // "*" for all IPs
+  ipAddress: string;
   hostHeader: string;
-  sslCertificateThumbprint?: string; // for HTTPS bindings
-  requireSni?: boolean; // enable Server Name Indication (-SslFlags 1)
+  sslCertificateThumbprint?: string;
+  requireSni?: boolean;
 }
 
 export interface IisVirtualDirectory {
-  path: string; // e.g., "/api"
-  physicalPath: string; // e.g., "C:\apps\myapp\api"
+  path: string;
+  physicalPath: string;
 }
 
 export interface IisSiteConfig {
@@ -28,17 +23,17 @@ export interface IisSiteConfig {
 export interface IisAppPoolConfig {
   name: string;
   createIfNotExists: boolean;
-  identity: string; // "ApplicationPoolIdentity", "NetworkService", "LocalService", "LocalSystem", or "SpecificUser"
-  managedRuntimeVersion: string; // "v4.0", "v2.0", "" (for .NET Core)
+  identity: string;
+  managedRuntimeVersion: string;
   managedPipelineMode: 'Integrated' | 'Classic';
-  idleTimeout: number; // minutes
+  idleTimeout: number;
   startMode: 'OnDemand' | 'AlwaysRunning';
-  username?: string; // Only for identity = "SpecificUser"
-  password?: string; // Only for identity = "SpecificUser"
+  username?: string;
+  password?: string;
 }
 
 export interface IisAuthenticationConfig {
-  type: string; // "Anonymous", "Windows", "Basic", etc.
+  type: string;
   username?: string;
   password?: string;
   domain?: string;
@@ -51,10 +46,10 @@ export interface IisDeploymentOptions {
 }
 
 export interface IisConfigFile {
-  name: string; // filename, e.g., "appsettings.json"
-  path: string | null; // relative path, e.g., "config/" or null for root
-  type: string; // "json", "xml", "dotenv", "text", etc.
-  data: string; // file content
+  name: string;
+  path: string | null;
+  type: string;
+  data: string;
   deployStrategy: 'merge' | 'override' | 'skip';
 }
 
@@ -84,7 +79,7 @@ export interface IisDeploymentProgress {
   deploymentId: string;
   step: string;
   message: string;
-  progress: number; // 0-100
+  progress: number;
 }
 
 export interface IisDeploymentResult {

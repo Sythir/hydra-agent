@@ -11,7 +11,6 @@ export const PATHS = {
   CONFIG_DIR: path.join(AGENT_HOME, 'config'),
   LOGS_DIR: path.join(AGENT_HOME, 'logs'),
 
-  // Signal files
   HEALTH_CHECK_SIGNAL: path.join(AGENT_HOME, 'config', 'health-check.signal'),
   RESTART_SIGNAL: path.join(AGENT_HOME, 'config', 'restart.signal'),
   UPDATE_LOCK: path.join(AGENT_HOME, 'update', 'update.lock'),

@@ -3,10 +3,6 @@ import { LoggerFunc } from '../../utils/logMessage';
 import { DeploymentErrorCodes } from '../../types/DeploymentError';
 import { executePowerShellOrThrow, escapePowerShellString } from './powershell.service';
 
-/**
- * Validates that a website exists using Get-Website, throwing a descriptive error if it does not.
- * Use this for early-exit checks before any modifications are made.
- */
 export async function validateSiteExists(
   siteName: string,
   logger: LoggerFunc,
@@ -32,9 +28,6 @@ export async function validateSiteExists(
   }
 }
 
-/**
- * Checks if a website exists
- */
 export async function siteExists(
   siteName: string,
   logger: LoggerFunc,
@@ -55,9 +48,6 @@ export async function siteExists(
   return result.includes('EXISTS') && !result.includes('NOT_EXISTS');
 }
 
-/**
- * Gets the current physical path and app pool of a site
- */
 export async function getSiteConfig(
   siteName: string,
   logger: LoggerFunc,
@@ -83,9 +73,6 @@ export async function getSiteConfig(
   }
 }
 
-/**
- * Creates a new website with minimal configuration
- */
 export async function createSite(
   siteName: string,
   physicalPath: string,
@@ -106,9 +93,6 @@ export async function createSite(
   );
 }
 
-/**
- * Updates the physical path of a website
- */
 export async function updateSitePhysicalPath(
   siteName: string,
   physicalPath: string,
@@ -128,9 +112,6 @@ export async function updateSitePhysicalPath(
   );
 }
 
-/**
- * Sets the application pool for a website
- */
 export async function setSiteAppPool(
   siteName: string,
   appPoolName: string,
@@ -150,9 +131,6 @@ export async function setSiteAppPool(
   );
 }
 
-/**
- * Stops a website
- */
 export async function stopSite(
   siteName: string,
   logger: LoggerFunc,
@@ -176,9 +154,6 @@ export async function stopSite(
   );
 }
 
-/**
- * Starts a website
- */
 export async function startSite(
   siteName: string,
   logger: LoggerFunc,
@@ -202,9 +177,6 @@ export async function startSite(
   );
 }
 
-/**
- * Deletes a website
- */
 export async function deleteSite(
   siteName: string,
   logger: LoggerFunc,
@@ -228,9 +200,6 @@ export async function deleteSite(
   );
 }
 
-/**
- * Deletes a virtual directory
- */
 export async function deleteVirtualDirectory(
   siteName: string,
   vdirName: string,
@@ -255,10 +224,6 @@ export async function deleteVirtualDirectory(
   );
 }
 
-/**
- * Configures virtual directories for a website
- * @returns Array of virtual directory names that were created (not updated)
- */
 export async function configureVirtualDirectories(
   siteName: string,
   virtualDirectories: IisVirtualDirectory[],
@@ -274,10 +239,8 @@ export async function configureVirtualDirectories(
   const createdVdirs: string[] = [];
 
   for (const vdir of virtualDirectories) {
-    // Virtual directory path should start with / and we need to remove it for the name
     const vdirName = vdir.path.startsWith('/') ? vdir.path.substring(1) : vdir.path;
 
-    // Ensure the physical path exists before creating the virtual directory
     const result = await executePowerShellOrThrow(
       `
       if (-not (Test-Path '${escapePowerShellString(vdir.physicalPath)}')) {
@@ -328,10 +291,6 @@ export async function configureVirtualDirectories(
   return createdVdirs;
 }
 
-/**
- * Ensures a website exists (creates if needed) and configures it
- * @returns Array of virtual directory names that were created (not updated)
- */
 export async function ensureSite(
   config: IisSiteConfig,
   physicalPath: string,
@@ -348,12 +307,10 @@ export async function ensureSite(
       throw new Error(`Website '${config.name}' does not exist and createIfNotExists is false`);
     }
   } else {
-    // Update physical path and app pool for existing site
     await updateSitePhysicalPath(config.name, physicalPath, logger, deployFolder);
     await setSiteAppPool(config.name, appPoolName, logger, deployFolder);
   }
 
-  // Configure virtual directories and track which were created
   const createdVdirs = await configureVirtualDirectories(config.name, config.virtualDirectories, logger, deployFolder);
 
   logger(deployFolder, 'info', `Website '${config.name}' configured successfully`);

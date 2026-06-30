@@ -43,7 +43,6 @@ socket.on(SOCKET_EVENTS.CONNECT, async () => {
   console.log('Connected to the Socket.IO server');
   socket.emit(SOCKET_EVENTS.REGISTER_KEY, { version: config.agentVersion, os: operatingSystem });
 
-  // Signal health after successful connection (for post-update health check)
   if (isPostUpdateStartup()) {
     try {
       await signalHealthy();
@@ -61,7 +60,6 @@ socket.on(SOCKET_EVENTS.DISCONNECT, () => {
 socket.on(`agent-update-${config.agentKey}`, async (data: AgentUpdateMessage) => {
   console.log('Received update command:', data);
 
-  // Don't process update if we're currently deploying
   if (isProcessing) {
     socket.emit(SOCKET_EVENTS.AGENT_UPDATE_STATUS, {
       updateId: data.updateId,
@@ -144,13 +142,10 @@ socket.on(`deploy-version-${config.agentKey}`, async (data: Message) => {
 });
 
 socket.on(`cancel-deployment-${config.agentKey}`, async (deploymentId: string) => {
-  // Running: requestCancel kills the active child and flags the id so processQueue
-  // reports CANCELLED instead of ERROR.
   if (processManager.requestCancel(deploymentId)) {
     return;
   }
 
-  // Pending in this agent's queue: drop it so it never starts, and report cancelled.
   const idx = queue.findIndex((item) => item.id === deploymentId);
   if (idx > -1) {
     queue.splice(idx, 1);
@@ -159,8 +154,6 @@ socket.on(`cancel-deployment-${config.agentKey}`, async (deploymentId: string) =
       deploymentId,
     });
   }
-  // If neither (already finished, or never reached this agent), no-op — the backend's
-  // direct DB update already handled the pending/offline case.
 });
 
 socket.on(`inprogress-deployments-${config.agentKey}`, async (data: string) => {
@@ -230,8 +223,6 @@ async function processQueue() {
         console.log('Send server api call to execute step with id ' + step.id);
       }
     }
-    // A cancelled run is killed mid-step, which surfaces as a failed step. Report
-    // it as cancelled rather than error so the status reflects the user's intent.
     const wasCancelled = processManager.isCancelled(data.id);
     const finalStatus = wasCancelled
       ? DEPLOYMENT_STATUS.CANCELLED

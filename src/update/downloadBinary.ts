@@ -20,7 +20,6 @@ export async function downloadBinary(
         headers: { 'User-Agent': 'HydraAgent' },
       },
       (response) => {
-        // Handle redirects (GitHub releases redirect to S3)
         if (response.statusCode === 302 || response.statusCode === 301) {
           const redirectUrl = response.headers.location;
           if (redirectUrl) {
@@ -65,7 +64,6 @@ export async function downloadBinary(
       reject(err);
     });
 
-    // Set timeout for slow/stalled downloads (5 minutes)
     request.setTimeout(300000, () => {
       request.destroy();
       file.close();

@@ -29,7 +29,6 @@ async function runDeployScript(
       detached: process.platform !== 'win32',
     });
 
-    // Expose the running process so it can be force-killed on cancel.
     setActiveChild(childProcess);
 
     let stdoutData = '';
@@ -49,27 +48,24 @@ async function runDeployScript(
       resolve({ succeeded: false });
     }, timeout);
 
-    // Stream stdout in real-time
     childProcess.stdout.on('data', (data) => {
       const output = data.toString();
       stdoutData += output;
       logger(deployFolderName, 'info', output);
     });
 
-    // Stream stderr in real-time
     childProcess.stderr.on('data', (data) => {
       const output = data.toString();
       stderrData += output;
       logger(deployFolderName, 'error', output);
     });
 
-    // Handle process completion
     childProcess.on('close', (code) => {
       clearTimeout(timeoutId);
       setActiveChild(null);
 
       if (hasTimedOut) {
-        return; // Already handled by timeout
+        return;
       }
 
       if (code === 0) {
@@ -81,7 +77,6 @@ async function runDeployScript(
       }
     });
 
-    // Handle process errors
     childProcess.on('error', (error) => {
       clearTimeout(timeoutId);
       setActiveChild(null);
