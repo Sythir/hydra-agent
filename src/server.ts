@@ -13,6 +13,7 @@ import { DEPLOYMENT_STATUS, SOCKET_EVENTS } from './config/constants';
 import { handleAgentUpdate, signalHealthy, isPostUpdateStartup } from './update';
 import { AgentUpdateMessage, UPDATE_STATUS } from './types/update';
 import { IisDeploymentMessageDto } from './types/iis';
+import * as processManager from './utils/processManager';
 
 const args = process.argv.slice(2);
 const config = loadEnvironmentConfig(args);
@@ -142,6 +143,26 @@ socket.on(`deploy-version-${config.agentKey}`, async (data: Message) => {
   }
 });
 
+socket.on(`cancel-deployment-${config.agentKey}`, async (deploymentId: string) => {
+  // Running: requestCancel kills the active child and flags the id so processQueue
+  // reports CANCELLED instead of ERROR.
+  if (processManager.requestCancel(deploymentId)) {
+    return;
+  }
+
+  // Pending in this agent's queue: drop it so it never starts, and report cancelled.
+  const idx = queue.findIndex((item) => item.id === deploymentId);
+  if (idx > -1) {
+    queue.splice(idx, 1);
+    socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
+      status: DEPLOYMENT_STATUS.CANCELLED,
+      deploymentId,
+    });
+  }
+  // If neither (already finished, or never reached this agent), no-op — the backend's
+  // direct DB update already handled the pending/offline case.
+});
+
 socket.on(`inprogress-deployments-${config.agentKey}`, async (data: string) => {
   if (!processingItem) {
     socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
@@ -170,6 +191,7 @@ async function processQueue() {
   isProcessing = true;
   const data = queue.shift()!;
   processingItem = data;
+  processManager.setActiveDeployment(data.id);
   try {
     console.log('version status: in-progress', JSON.stringify(data, null, 2));
     socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
@@ -208,11 +230,21 @@ async function processQueue() {
         console.log('Send server api call to execute step with id ' + step.id);
       }
     }
-    console.log('sending status', isFailed ? 'error' : 'success');
+    // A cancelled run is killed mid-step, which surfaces as a failed step. Report
+    // it as cancelled rather than error so the status reflects the user's intent.
+    const wasCancelled = processManager.isCancelled(data.id);
+    const finalStatus = wasCancelled
+      ? DEPLOYMENT_STATUS.CANCELLED
+      : isFailed
+        ? DEPLOYMENT_STATUS.ERROR
+        : DEPLOYMENT_STATUS.SUCCESS;
+    console.log('sending status', finalStatus);
     socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
-      status: isFailed ? DEPLOYMENT_STATUS.ERROR : DEPLOYMENT_STATUS.SUCCESS,
+      status: finalStatus,
       deploymentId: data.id,
     });
+    processManager.clearCancelled(data.id);
+    processManager.clearActive();
 
     processQueue();
   } catch (error) {
@@ -221,11 +253,14 @@ async function processQueue() {
     if (error instanceof Error && error.stack) {
       console.error(error.stack);
     }
+    const status = processManager.isCancelled(data.id) ? DEPLOYMENT_STATUS.CANCELLED : DEPLOYMENT_STATUS.ERROR;
     socket.emit(SOCKET_EVENTS.VERSION_STATUS, {
-      status: DEPLOYMENT_STATUS.ERROR,
+      status,
       deploymentId: data.id,
       output: errorMessage,
     });
+    processManager.clearCancelled(data.id);
+    processManager.clearActive();
 
     processQueue();
   }

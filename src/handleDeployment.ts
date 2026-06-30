@@ -10,6 +10,7 @@ import { cleanupOldDeployments } from './utils/CleanupOldDeployments';
 import { ExecutionResultReturnType } from './types/ExecutionResultReturnType';
 import { downloadNugetPackage, unzipPackage } from './utils/IISUtils';
 import { DEFAULT_DEPLOY_TIMEOUT_SECONDS, DEPLOYMENT_FOLDER_NAME } from './config/constants';
+import { killProcessTree, setActiveChild } from './utils/processManager';
 
 async function runDeployScript(
   deployScript: string,
@@ -28,6 +29,9 @@ async function runDeployScript(
       detached: process.platform !== 'win32',
     });
 
+    // Expose the running process so it can be force-killed on cancel.
+    setActiveChild(childProcess);
+
     let stdoutData = '';
     let stderrData = '';
     let hasTimedOut = false;
@@ -35,22 +39,7 @@ async function runDeployScript(
     const timeoutId = setTimeout(() => {
       hasTimedOut = true;
 
-      // Platform-specific implementation needed because:
-      // - spawn with shell: true creates a shell process that spawns the actual script
-      // - Killing the shell alone doesn't kill its child processes
-      // - Unix: Use negative PID to kill entire process group
-      // - Windows: Use taskkill /T to kill process tree
-      if (childProcess.pid) {
-        if (process.platform === 'win32') {
-          execSync(`taskkill /F /T /PID ${childProcess.pid}`, { stdio: 'ignore' });
-        } else {
-          try {
-            process.kill(-childProcess.pid, 'SIGKILL');
-          } catch {
-            childProcess.kill('SIGKILL');
-          }
-        }
-      }
+      killProcessTree(childProcess);
 
       logger(
         deployFolderName,
@@ -77,6 +66,7 @@ async function runDeployScript(
     // Handle process completion
     childProcess.on('close', (code) => {
       clearTimeout(timeoutId);
+      setActiveChild(null);
 
       if (hasTimedOut) {
         return; // Already handled by timeout
@@ -94,6 +84,7 @@ async function runDeployScript(
     // Handle process errors
     childProcess.on('error', (error) => {
       clearTimeout(timeoutId);
+      setActiveChild(null);
       logger(deployFolderName, 'error', `Deploy script execution error: ${error.message}`);
       resolve({ succeeded: false });
     });
