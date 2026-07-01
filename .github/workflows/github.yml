@@ -5,6 +5,12 @@ on:
     tags:
       - 'v*'
 
+# Needed so pnpm install can read @sythir/config-merger from GitHub Packages,
+# and so the release job can publish GitHub releases.
+permissions:
+  contents: write
+  packages: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -28,6 +34,10 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
+        env:
+          # config-merger is linked to this repo in GitHub Packages, so the
+          # default GITHUB_TOKEN can read it (see agent/.npmrc).
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Inject version
         run: |
