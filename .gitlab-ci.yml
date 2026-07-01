@@ -7,6 +7,9 @@ stages:
 # Default image for most jobs
 image: node:22
 
+# NODE_AUTH_TOKEN must be defined as a CI/CD variable (a GitHub PAT with
+# read:packages) so pnpm i can fetch @sythir/config-merger from GitHub Packages
+# (see .npmrc). GitLab injects CI/CD variables into the job environment.
 build-job:
   stage: build
   before_script:
