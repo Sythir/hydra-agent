@@ -47,8 +47,29 @@ jobs:
       - name: Build application
         run: pnpm build
 
+      - name: Cache pkg base binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.pkg-cache
+          key: pkg-cache-${{ matrix.target }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pkg-cache-${{ matrix.target }}-
+
       - name: Build package for ${{ matrix.target }}
-        run: pnpm exec pkg . --target node18-${{ matrix.target }} --output ./bin/${{ matrix.output }}
+        # pkg-fetch downloads the base Node binary from a GitHub release asset with no
+        # built-in retry - a transient 429 there makes it silently fall back to building
+        # from source, which only works for the runner's own platform (Linux), so a Windows
+        # build fails outright instead of just being slow. Retry a few times with backoff.
+        run: |
+          set +e
+          for attempt in 1 2 3 4 5; do
+            pnpm exec pkg . --target node18-${{ matrix.target }} --output ./bin/${{ matrix.output }}
+            status=$?
+            [ $status -eq 0 ] && exit 0
+            echo "pkg build failed (attempt $attempt/5), likely a transient rate limit fetching the base Node.js binary - retrying in 30s..."
+            sleep 30
+          done
+          exit 1
 
       - name: Generate checksum
         run: |
@@ -83,6 +104,8 @@ jobs:
           cp artifacts/**/* release/ || true
           cp scripts/launcher.sh release/
           cp scripts/launcher.ps1 release/
+          cp scripts/install-windows-service.ps1 release/
+          cp scripts/uninstall-windows-service.ps1 release/
 
       - name: Create release
         uses: softprops/action-gh-release@v1
@@ -98,6 +121,8 @@ jobs:
             - `agent-win.exe` - Windows x64 binary
             - `launcher.sh` - Linux launcher script
             - `launcher.ps1` - Windows PowerShell launcher script
+            - `install-windows-service.ps1` - Installs the agent as a Windows Scheduled Task (survives RDP logoff)
+            - `uninstall-windows-service.ps1` - Removes that Scheduled Task
 
             ## Checksums
             See `.sha256` files for verification.
