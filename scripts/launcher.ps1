@@ -25,6 +25,8 @@ $RestartSignal = Join-Path $ConfigDir "restart.signal"
 $HealthCheckSignal = Join-Path $ConfigDir "health-check.signal"
 $UpdateLock = Join-Path $UpdateDir "update.lock"
 $LogFile = Join-Path $LogsDir "launcher.log"
+$AgentStdOutLog = Join-Path $LogsDir "agent-stdout.log"
+$AgentStdErrLog = Join-Path $LogsDir "agent-stderr.log"
 
 $HealthCheckTimeout = 30
 $HealthCheckInterval = 2
@@ -135,7 +137,10 @@ while ($true) {
 
     Write-Log "INFO" "Starting agent..."
 
-    $process = Start-Process -FilePath $CurrentBinary -ArgumentList $AgentArgs -PassThru -NoNewWindow -Wait:$false
+    # -RedirectStandardOutput/-RedirectStandardError avoid inheriting the console handle: without them,
+    # -NoNewWindow throws "the handle is invalid" when there's no attached console (Task Scheduler running
+    # with no user logged on, or any other non-interactive session).
+    $process = Start-Process -FilePath $CurrentBinary -ArgumentList $AgentArgs -PassThru -NoNewWindow -Wait:$false -RedirectStandardOutput $AgentStdOutLog -RedirectStandardError $AgentStdErrLog
 
     $process.WaitForExit()
     $exitCode = $process.ExitCode
@@ -154,7 +159,7 @@ while ($true) {
             if (Invoke-Update) {
                 Write-Log "INFO" "Starting updated agent for health check"
 
-                $process = Start-Process -FilePath $CurrentBinary -ArgumentList $AgentArgs -PassThru -NoNewWindow -Wait:$false
+                $process = Start-Process -FilePath $CurrentBinary -ArgumentList $AgentArgs -PassThru -NoNewWindow -Wait:$false -RedirectStandardOutput $AgentStdOutLog -RedirectStandardError $AgentStdErrLog
 
                 if (Test-HealthCheck) {
                     Write-Log "INFO" "Update successful"

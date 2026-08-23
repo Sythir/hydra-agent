@@ -165,9 +165,58 @@ Invoke-WebRequest `
 & "$env:USERPROFILE\HydraAgent\launcher.ps1" --agent-key YOUR_AGENT_KEY
 ```
 
-### Step 4: Install as Windows Service
+### Step 4: Install as a Windows Scheduled Task (survives RDP logoff)
 
-Using [NSSM](https://nssm.cc/) (Non-Sucking Service Manager):
+> Running `launcher.ps1` by hand in an RDP session (even as an Administrator) will **always**
+> stop when that session logs off — admin rights don't change that. The process only survives
+> logoff if it's registered as a Scheduled Task (or service) that runs with no user logged on.
+
+Download the installer alongside `launcher.ps1` and run it from an **elevated** PowerShell prompt:
+
+```powershell
+$AgentHome = "$env:USERPROFILE\HydraAgent"
+
+Invoke-WebRequest `
+  -Uri "https://github.com/Sythir/hydra-agent/releases/latest/download/install-windows-service.ps1" `
+  -OutFile "$AgentHome\install-windows-service.ps1"
+
+& "$AgentHome\install-windows-service.ps1" -AgentKey YOUR_AGENT_KEY
+```
+
+This registers a Scheduled Task (`HydraAgent`) that:
+
+- starts at boot (`AtStartup` trigger),
+- runs as `SYSTEM` with `LogonType ServiceAccount` — the setting that actually keeps it running with
+  nobody logged on, not just tolerant of an RDP disconnect,
+- has no execution time limit (Task Scheduler kills tasks after 72h by default otherwise),
+- restarts automatically up to 3 times on failure.
+
+Check status:
+
+```powershell
+Get-ScheduledTask -TaskName HydraAgent | Get-ScheduledTaskInfo
+```
+
+To run the agent as a specific domain/local account instead of `SYSTEM`, pass `-User` and `-Password`
+(that account needs "Log on as a batch job" rights):
+
+```powershell
+& "$AgentHome\install-windows-service.ps1" -AgentKey YOUR_AGENT_KEY -User "DOMAIN\svc-hydra" -Password (Read-Host -AsSecureString)
+```
+
+To uninstall:
+
+```powershell
+Invoke-WebRequest `
+  -Uri "https://github.com/Sythir/hydra-agent/releases/latest/download/uninstall-windows-service.ps1" `
+  -OutFile "$AgentHome\uninstall-windows-service.ps1"
+
+& "$AgentHome\uninstall-windows-service.ps1"
+```
+
+#### Alternative: NSSM
+
+If you'd rather use [NSSM](https://nssm.cc/) (Non-Sucking Service Manager) instead of Task Scheduler:
 
 ```powershell
 # Download NSSM
@@ -182,37 +231,14 @@ nssm set HydraAgent AppDirectory "$env:USERPROFILE\HydraAgent"
 nssm set HydraAgent DisplayName "Hydra Deploy Agent"
 nssm set HydraAgent Description "Deployment agent for Hydra"
 nssm set HydraAgent Start SERVICE_AUTO_START
+nssm set HydraAgent ObjectName LocalSystem
 
 # Start the service
 nssm start HydraAgent
 ```
 
-Or using Task Scheduler:
-
-```powershell
-$Action = New-ScheduledTaskAction `
-  -Execute "powershell.exe" `
-  -Argument "-ExecutionPolicy Bypass -File `"$env:USERPROFILE\HydraAgent\launcher.ps1`" --agent-key YOUR_AGENT_KEY"
-
-$Trigger = New-ScheduledTaskTrigger -AtStartup
-
-$Settings = New-ScheduledTaskSettingsSet `
-  -AllowStartIfOnBatteries `
-  -DontStopIfGoingOnBatteries `
-  -RestartCount 3 `
-  -RestartInterval (New-TimeSpan -Minutes 1)
-
-Register-ScheduledTask `
-  -TaskName "HydraAgent" `
-  -Action $Action `
-  -Trigger $Trigger `
-  -Settings $Settings `
-  -RunLevel Highest `
-  -User "SYSTEM"
-
-# Start immediately
-Start-ScheduledTask -TaskName "HydraAgent"
-```
+NSSM services run as `LocalSystem` by default regardless of who's logged in, so this also survives
+RDP logoff.
 
 ---
 
@@ -340,12 +366,12 @@ rm -rf ~/HydraAgent
 ### Windows
 
 ```powershell
+# If using Task Scheduler (install-windows-service.ps1)
+& "$env:USERPROFILE\HydraAgent\uninstall-windows-service.ps1"
+
 # If using NSSM
 nssm stop HydraAgent
 nssm remove HydraAgent confirm
-
-# If using Task Scheduler
-Unregister-ScheduledTask -TaskName "HydraAgent" -Confirm:$false
 
 # Remove files
 Remove-Item -Recurse -Force "$env:USERPROFILE\HydraAgent"
