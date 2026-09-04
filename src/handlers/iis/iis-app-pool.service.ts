@@ -158,7 +158,7 @@ export async function deleteAppPool(
     Import-Module WebAdministration
     $appPool = Get-Item "IIS:\\AppPools\\${escapePowerShellString(appPoolName)}" -ErrorAction SilentlyContinue
     if ($appPool) {
-      Remove-WebAppPool -Name '${escapePowerShellString(appPoolName)}'
+      Remove-WebAppPool -Name '${escapePowerShellString(appPoolName)}' -Confirm:$false
       Write-Output "App pool deleted"
     } else {
       Write-Output "App pool does not exist"

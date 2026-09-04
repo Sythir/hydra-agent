@@ -1,6 +1,6 @@
 import { IisBinding, ExistingBinding } from '../../types/iis';
 import { LoggerFunc } from '../../utils/logMessage';
-import { DeploymentErrorCodes } from '../../types/DeploymentError';
+import { DeploymentError, DeploymentErrorCodes } from '../../types/DeploymentError';
 import { executePowerShellOrThrow, escapePowerShellString } from './powershell.service';
 
 export async function getExistingBindings(
@@ -65,6 +65,101 @@ export async function getExistingHttpsBindings(
   return httpsBindings;
 }
 
+export interface BindingConflict {
+  siteName: string;
+  protocol: string;
+  bindingInformation: string;
+}
+
+function bindingInformationOf(binding: IisBinding): string {
+  return `${binding.ipAddress || '*'}:${binding.port}:${binding.hostHeader || ''}`;
+}
+
+/**
+ * Finds bindings on OTHER sites that are identical to the ones we are about to configure.
+ * IIS accepts such a configuration but HTTP.SYS refuses the URL registration, which surfaces
+ * as "Cannot create a file when that file already exists. (0x800700B7)" when starting the site.
+ */
+export async function findBindingConflicts(
+  siteName: string,
+  bindings: IisBinding[],
+  logger: LoggerFunc,
+  deployFolder: string,
+): Promise<BindingConflict[]> {
+  if (bindings.length === 0) {
+    return [];
+  }
+
+  const result = await executePowerShellOrThrow(
+    `
+    Import-Module WebAdministration
+    $target = '${escapePowerShellString(siteName)}'
+    $all = @()
+    foreach ($site in Get-Website) {
+      if ($site.Name -eq $target) { continue }
+      foreach ($b in $site.Bindings.Collection) {
+        $all += @{
+          siteName = $site.Name
+          protocol = $b.protocol
+          bindingInformation = $b.bindingInformation
+        }
+      }
+    }
+    $all | ConvertTo-Json -Compress
+    `,
+    logger,
+    deployFolder,
+    DeploymentErrorCodes.IIS_BINDING_CONFIG_FAILED,
+  );
+
+  let otherBindings: BindingConflict[] = [];
+  try {
+    if (result && result !== 'null' && result !== '') {
+      const parsed = JSON.parse(result);
+      otherBindings = Array.isArray(parsed) ? parsed : [parsed];
+    }
+  } catch {
+    logger(deployFolder, 'warning', 'Could not parse bindings of other sites, skipping conflict check');
+    return [];
+  }
+
+  const wanted = new Map<string, IisBinding>();
+  for (const binding of bindings) {
+    wanted.set(`${binding.protocol}|${bindingInformationOf(binding)}`, binding);
+  }
+
+  return otherBindings.filter(
+    (other) => other.bindingInformation && wanted.has(`${other.protocol}|${other.bindingInformation}`),
+  );
+}
+
+/**
+ * Fails the deployment before anything is changed when another site already owns one of the
+ * requested bindings, instead of letting Start-Website fail later with an opaque HRESULT.
+ */
+export async function assertNoBindingConflicts(
+  siteName: string,
+  bindings: IisBinding[],
+  logger: LoggerFunc,
+  deployFolder: string,
+): Promise<void> {
+  const conflicts = await findBindingConflicts(siteName, bindings, logger, deployFolder);
+  if (conflicts.length === 0) {
+    return;
+  }
+
+  const details = conflicts
+    .map((conflict) => `${conflict.protocol} ${conflict.bindingInformation} is already used by site '${conflict.siteName}'`)
+    .join('; ');
+
+  logger(deployFolder, 'error', `Binding conflict detected: ${details}`);
+  throw new DeploymentError(
+    `Cannot configure bindings for site '${siteName}': ${details}. Remove or change the conflicting binding(s) first.`,
+    DeploymentErrorCodes.IIS_BINDING_CONFIG_FAILED,
+    { conflicts },
+  );
+}
+
 export async function removeAllBindings(
   siteName: string,
   logger: LoggerFunc,
@@ -74,7 +169,11 @@ export async function removeAllBindings(
   await executePowerShellOrThrow(
     `
     Import-Module WebAdministration
-    Get-WebBinding -Name '${escapePowerShellString(siteName)}' | Remove-WebBinding
+    Get-WebBinding -Name '${escapePowerShellString(siteName)}' | Remove-WebBinding -Confirm:$false
+    $remaining = @(Get-WebBinding -Name '${escapePowerShellString(siteName)}').Count
+    if ($remaining -gt 0) {
+      throw "Failed to remove all bindings, $remaining binding(s) remain"
+    }
     Write-Output "All bindings removed"
     `,
     logger,

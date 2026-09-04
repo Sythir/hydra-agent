@@ -12,7 +12,7 @@ import { ExecutionResultReturnType } from '../../types/ExecutionResultReturnType
 import { checkIisAvailable } from './powershell.service';
 import { ensureAppPool, stopAppPool, startAppPool, deleteAppPool, appPoolExists } from './iis-app-pool.service';
 import { ensureSite, stopSite, startSite, deleteSite, siteExists, getSiteConfig, deleteVirtualDirectory, updateSitePhysicalPath, setSiteAppPool, validateSiteExists } from './iis-site.service';
-import { configureBindings, getExistingBindings, restoreBindings } from './iis-binding.service';
+import { configureBindings, getExistingBindings, restoreBindings, assertNoBindingConflicts } from './iis-binding.service';
 import { configureAuthentication } from './iis-auth.service';
 import { deployConfigFiles } from './iis-config.service';
 
@@ -89,6 +89,8 @@ export async function handleIisDeployment(
     if (!message.site.createIfNotExists) {
       await validateSiteExists(message.site.name, logger, deployFolder);
     }
+
+    await assertNoBindingConflicts(message.site.name, message.site.bindings, logger, deployFolder);
 
     emitProgress(socket, deploymentId, 'downloading', 'Downloading application package...', 10);
 
@@ -185,7 +187,7 @@ export async function handleIisDeployment(
       await startAppPool(message.appPool.name, logger, deployFolder);
 
       logger(deployFolder, 'info', 'Starting site after deployment');
-      await startSite(message.site.name, logger, deployFolder);
+      await startSite(message.site.name, logger, deployFolder, message.site.bindings);
     }
 
     await cleanupOldDeployments(deployFolder, path.dirname(deployFolder), keepDeployments, logger);
@@ -214,7 +216,7 @@ export async function handleIisDeployment(
       }
     }
 
-    if (deploymentState.virtualDirectoriesCreated.length > 0) {
+    if (deploymentState.virtualDirectoriesCreated.length > 0 && !deploymentState.siteCreated) {
       logger(deployFolder || '.', 'info', `Rollback: Deleting ${deploymentState.virtualDirectoriesCreated.length} created virtual directories`);
       for (const vdirName of deploymentState.virtualDirectoriesCreated) {
         try {

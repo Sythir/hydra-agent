@@ -1,6 +1,7 @@
-import { IisSiteConfig, IisVirtualDirectory } from '../../types/iis';
+import { IisSiteConfig, IisVirtualDirectory, IisBinding } from '../../types/iis';
 import { LoggerFunc } from '../../utils/logMessage';
-import { DeploymentErrorCodes } from '../../types/DeploymentError';
+import { DeploymentError, DeploymentErrorCodes } from '../../types/DeploymentError';
+import { findBindingConflicts } from './iis-binding.service';
 import { executePowerShellOrThrow, escapePowerShellString } from './powershell.service';
 
 export async function validateSiteExists(
@@ -79,12 +80,20 @@ export async function createSite(
   appPoolName: string,
   logger: LoggerFunc,
   deployFolder: string,
+  initialBinding?: IisBinding,
 ): Promise<void> {
   logger(deployFolder, 'info', `Creating website: ${siteName}`);
+
+  // Without an explicit binding New-Website falls back to '*:80:' (no host header), which collides
+  // with any other site on port 80 and leaves the new site unable to start.
+  const bindingArgs = initialBinding
+    ? `-Port ${initialBinding.port} -IPAddress '${escapePowerShellString(initialBinding.ipAddress || '*')}' -HostHeader '${escapePowerShellString(initialBinding.hostHeader || '')}'`
+    : '';
+
   await executePowerShellOrThrow(
     `
     Import-Module WebAdministration
-    New-Website -Name '${escapePowerShellString(siteName)}' -PhysicalPath '${escapePowerShellString(physicalPath)}' -ApplicationPool '${escapePowerShellString(appPoolName)}' -Force
+    New-Website -Name '${escapePowerShellString(siteName)}' -PhysicalPath '${escapePowerShellString(physicalPath)}' -ApplicationPool '${escapePowerShellString(appPoolName)}' ${bindingArgs} -Force
     Write-Output "Website created successfully"
     `,
     logger,
@@ -158,23 +167,65 @@ export async function startSite(
   siteName: string,
   logger: LoggerFunc,
   deployFolder: string,
+  bindings: IisBinding[] = [],
 ): Promise<void> {
   logger(deployFolder, 'info', `Starting website: ${siteName}`);
-  await executePowerShellOrThrow(
-    `
-    Import-Module WebAdministration
-    $site = Get-Item "IIS:\\Sites\\${escapePowerShellString(siteName)}" -ErrorAction SilentlyContinue
-    if ($site -and $site.State -ne 'Started') {
-      Start-Website -Name '${escapePowerShellString(siteName)}'
-      Write-Output "Website started"
-    } else {
-      Write-Output "Website already started or does not exist"
+  try {
+    await executePowerShellOrThrow(
+      `
+      Import-Module WebAdministration
+      $site = Get-Item "IIS:\\Sites\\${escapePowerShellString(siteName)}" -ErrorAction SilentlyContinue
+      if ($site -and $site.State -ne 'Started') {
+        Start-Website -Name '${escapePowerShellString(siteName)}'
+        Write-Output "Website started"
+      } else {
+        Write-Output "Website already started or does not exist"
+      }
+      `,
+      logger,
+      deployFolder,
+      DeploymentErrorCodes.IIS_START_FAILED,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new DeploymentError(
+      `Failed to start website '${siteName}': ${message}${await describeStartFailure(siteName, bindings, message, logger, deployFolder)}`,
+      DeploymentErrorCodes.IIS_START_FAILED,
+      { siteName },
+    );
+  }
+}
+
+/**
+ * Start-Website reports HTTP.SYS registration problems as
+ * "Cannot create a file when that file already exists. (Exception from HRESULT: 0x800700B7)".
+ * That almost always means another site already owns one of this site's bindings, so look the
+ * owner up and put it in the error message.
+ */
+async function describeStartFailure(
+  siteName: string,
+  bindings: IisBinding[],
+  message: string,
+  logger: LoggerFunc,
+  deployFolder: string,
+): Promise<string> {
+  if (!message.includes('0x800700B7') && !message.includes('already exists')) {
+    return '';
+  }
+
+  try {
+    const conflicts = await findBindingConflicts(siteName, bindings, logger, deployFolder);
+    if (conflicts.length > 0) {
+      const details = conflicts
+        .map((conflict) => `${conflict.protocol} ${conflict.bindingInformation} (site '${conflict.siteName}')`)
+        .join(', ');
+      return ` - a binding is already in use by another site: ${details}`;
     }
-    `,
-    logger,
-    deployFolder,
-    DeploymentErrorCodes.IIS_START_FAILED,
-  );
+  } catch {
+    // Diagnostics are best effort, keep the original error.
+  }
+
+  return ' - a binding of this site is already registered in HTTP.SYS by another site or process (check "netsh http show servicestate")';
 }
 
 export async function deleteSite(
@@ -188,7 +239,7 @@ export async function deleteSite(
     Import-Module WebAdministration
     $site = Get-Item "IIS:\\Sites\\${escapePowerShellString(siteName)}" -ErrorAction SilentlyContinue
     if ($site) {
-      Remove-Website -Name '${escapePowerShellString(siteName)}'
+      Remove-Website -Name '${escapePowerShellString(siteName)}' -Confirm:$false
       Write-Output "Website deleted"
     } else {
       Write-Output "Website does not exist"
@@ -210,9 +261,9 @@ export async function deleteVirtualDirectory(
   await executePowerShellOrThrow(
     `
     Import-Module WebAdministration
-    $existing = Get-WebVirtualDirectory -Site '${escapePowerShellString(siteName)}' -Name '${escapePowerShellString(vdirName)}'
+    $existing = Get-WebVirtualDirectory -Site '${escapePowerShellString(siteName)}' -Name '${escapePowerShellString(vdirName)}' -ErrorAction SilentlyContinue
     if ($existing) {
-      Remove-WebVirtualDirectory -Site '${escapePowerShellString(siteName)}' -Name '${escapePowerShellString(vdirName)}'
+      Remove-WebVirtualDirectory -Site '${escapePowerShellString(siteName)}' -Name '${escapePowerShellString(vdirName)}' -Confirm:$false
       Write-Output "Virtual directory deleted"
     } else {
       Write-Output "Virtual directory does not exist"
@@ -265,7 +316,7 @@ export async function configureVirtualDirectories(
       $vdirPath = '${escapePowerShellString(vdir.physicalPath)}'
 
       # Check if virtual directory exists using Get-WebVirtualDirectory (avoids IIS PSDrive path resolution issues)
-      $existing = Get-WebVirtualDirectory -Site $siteName -Name $vdirName
+      $existing = Get-WebVirtualDirectory -Site $siteName -Name $vdirName -ErrorAction SilentlyContinue
       if ($existing) {
         # Update physical path
         Set-WebConfigurationProperty -Filter "/system.applicationHost/sites/site[@name='$siteName']/application[@path='/']/virtualDirectory[@path='/$vdirName']" -Name "physicalPath" -Value $vdirPath -PSPath "IIS:\\"
@@ -302,7 +353,7 @@ export async function ensureSite(
 
   if (!exists) {
     if (config.createIfNotExists) {
-      await createSite(config.name, physicalPath, appPoolName, logger, deployFolder);
+      await createSite(config.name, physicalPath, appPoolName, logger, deployFolder, config.bindings[0]);
     } else {
       throw new Error(`Website '${config.name}' does not exist and createIfNotExists is false`);
     }
