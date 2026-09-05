@@ -27,6 +27,7 @@ $UpdateLock = Join-Path $UpdateDir "update.lock"
 $LogFile = Join-Path $LogsDir "launcher.log"
 $AgentStdOutLog = Join-Path $LogsDir "agent-stdout.log"
 $AgentStdErrLog = Join-Path $LogsDir "agent-stderr.log"
+$AgentFailedLog = Join-Path $LogsDir "agent-failed-update.log"
 
 $HealthCheckTimeout = 30
 $HealthCheckInterval = 2
@@ -50,6 +51,37 @@ function Write-Log {
 @($CurrentDir, $BackupDir, $UpdateDir, $ConfigDir, $LogsDir) | ForEach-Object {
     if (-not (Test-Path $_)) {
         New-Item -ItemType Directory -Path $_ -Force | Out-Null
+    }
+}
+
+# The agent binary resolves its update/config/logs directories from AGENT_HOME, falling back to the
+# working directory. Both must point at the same place as this script or the agent downloads the
+# new binary and writes restart.signal somewhere the launcher never looks, and no update ever
+# applies. This matters most under the Scheduled Task, where the agent runs as SYSTEM.
+$env:AGENT_HOME = $AgentHome
+
+function Start-Agent {
+    $startParams = @{
+        FilePath               = $CurrentBinary
+        PassThru               = $true
+        NoNewWindow            = $true
+        Wait                   = $false
+        WorkingDirectory       = $AgentHome
+        # Without these, -NoNewWindow throws "the handle is invalid" when there's no attached
+        # console (Task Scheduler running with no user logged on, or any non-interactive session).
+        RedirectStandardOutput = $AgentStdOutLog
+        RedirectStandardError  = $AgentStdErrLog
+    }
+
+    if ($AgentArgs -and $AgentArgs.Count -gt 0) {
+        $startParams.ArgumentList = $AgentArgs
+    }
+
+    try {
+        return Start-Process @startParams
+    } catch {
+        Write-Log "ERROR" "Failed to start agent: $($_.Exception.Message)"
+        return $null
     }
 }
 
@@ -86,6 +118,7 @@ function Invoke-Rollback {
 
 function Invoke-Update {
     if (-not (Test-Path $RestartSignal)) {
+        Write-Log "ERROR" "No restart signal found at $RestartSignal (agent and launcher disagree on AGENT_HOME?)"
         return $false
     }
 
@@ -106,7 +139,10 @@ function Invoke-Update {
 
     Move-Item $newBinaryPath $CurrentBinary -Force
 
-    Remove-Item $UpdateLock -Force -ErrorAction SilentlyContinue
+    # NOTE: the update lock is deliberately NOT removed here. The agent only sends the health-check
+    # signal when it starts up with the lock still in place, so clearing it before the new binary
+    # runs makes every health check time out and every update roll back. It is cleared once the
+    # health check has settled, one way or the other.
 
     Write-Log "INFO" "Binary replacement complete"
     return $true
@@ -119,11 +155,12 @@ function Clear-Signals {
 }
 
 $restartCount = 0
+$stopLauncher = $false
 Clear-Signals
 
-Write-Log "INFO" "Hydra Agent Launcher started"
+Write-Log "INFO" "Hydra Agent Launcher started (AGENT_HOME: $AgentHome)"
 
-while ($true) {
+while (-not $stopLauncher) {
     if (Test-Path $RestartSignal) {
         Invoke-Update | Out-Null
     }
@@ -137,20 +174,29 @@ while ($true) {
 
     Write-Log "INFO" "Starting agent..."
 
-    # -RedirectStandardOutput/-RedirectStandardError avoid inheriting the console handle: without them,
-    # -NoNewWindow throws "the handle is invalid" when there's no attached console (Task Scheduler running
-    # with no user logged on, or any other non-interactive session).
-    $process = Start-Process -FilePath $CurrentBinary -ArgumentList $AgentArgs -PassThru -NoNewWindow -Wait:$false -RedirectStandardOutput $AgentStdOutLog -RedirectStandardError $AgentStdErrLog
+    $process = Start-Agent
+
+    if (-not $process) {
+        $restartCount++
+        if ($restartCount -ge $MaxRestartAttempts) {
+            Write-Log "ERROR" "Max restart attempts ($MaxRestartAttempts) reached. Exiting."
+            exit 1
+        }
+        Start-Sleep -Seconds 5
+        continue
+    }
 
     $process.WaitForExit()
     $exitCode = $process.ExitCode
 
     Write-Log "INFO" "Agent exited with code: $exitCode"
 
+    # NOTE: 'break'/'continue' inside a PowerShell switch act on the switch, not on the enclosing
+    # while loop, so the loop is controlled with $stopLauncher instead.
     switch ($exitCode) {
         0 {
             Write-Log "INFO" "Agent exited normally"
-            break
+            $stopLauncher = $true
         }
         100 {
             Write-Log "INFO" "Update restart requested"
@@ -159,25 +205,36 @@ while ($true) {
             if (Invoke-Update) {
                 Write-Log "INFO" "Starting updated agent for health check"
 
-                $process = Start-Process -FilePath $CurrentBinary -ArgumentList $AgentArgs -PassThru -NoNewWindow -Wait:$false -RedirectStandardOutput $AgentStdOutLog -RedirectStandardError $AgentStdErrLog
+                $process = Start-Agent
 
-                if (Test-HealthCheck) {
+                if ($process -and (Test-HealthCheck)) {
                     Write-Log "INFO" "Update successful"
+                    Remove-Item $UpdateLock -Force -ErrorAction SilentlyContinue
+
                     $process.WaitForExit()
                     $newExitCode = $process.ExitCode
 
-                    if ($newExitCode -eq 100) {
-                        continue
-                    } elseif ($newExitCode -eq 0) {
+                    if ($newExitCode -eq 0) {
                         Write-Log "INFO" "Agent exited normally after update"
-                        break
-                    } else {
+                        $stopLauncher = $true
+                    } elseif ($newExitCode -ne 100) {
                         Write-Log "WARN" "Agent exited unexpectedly after update with code: $newExitCode"
                     }
                 } else {
                     Write-Log "ERROR" "Health check failed, initiating rollback"
-                    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+
+                    if (Test-Path $AgentStdErrLog) {
+                        # Start-Process truncates the redirect targets on every start, so keep a
+                        # copy of why the new binary failed before the rollback overwrites it.
+                        Copy-Item $AgentStdErrLog $AgentFailedLog -Force -ErrorAction SilentlyContinue
+                        Write-Log "INFO" "Saved failing agent output to $AgentFailedLog"
+                    }
+
+                    if ($process) {
+                        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                    }
                     Start-Sleep -Seconds 2
+                    Remove-Item $UpdateLock -Force -ErrorAction SilentlyContinue
 
                     if (Invoke-Rollback) {
                         Write-Log "INFO" "Rollback successful, restarting with previous version"
@@ -188,6 +245,7 @@ while ($true) {
                 }
             } else {
                 Write-Log "ERROR" "Update failed, restarting current version"
+                Remove-Item $UpdateLock -Force -ErrorAction SilentlyContinue
             }
         }
         default {

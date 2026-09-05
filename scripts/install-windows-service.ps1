@@ -60,8 +60,6 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
 $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $launcherArgs -WorkingDirectory $AgentHome
 $Trigger = New-ScheduledTaskTrigger -AtStartup
 
-# ExecutionTimeLimit defaults to 72 hours - without overriding it to zero (unlimited), Task
-# Scheduler would silently kill a long-running agent process after 3 days.
 $Settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
@@ -96,5 +94,6 @@ Write-Host "Task '$TaskName' installed and started."
 Write-Host "  State:       $($task.State)"
 Write-Host "  Last result: $($info.LastTaskResult)"
 Write-Host "  Runs as:     $User (survives RDP logoff and reboot)"
+Write-Host "  AGENT_HOME:  $AgentHome"
 Write-Host ""
 Write-Host "Logs: $(Join-Path $AgentHome 'logs\launcher.log')"

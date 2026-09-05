@@ -5,6 +5,10 @@ set -e
 # Manages the agent process, handles updates, and performs rollbacks
 
 AGENT_HOME="${AGENT_HOME:-$(dirname "$(realpath "$0")")}"
+# The agent binary resolves its update/config/logs directories from AGENT_HOME, falling back to the
+# working directory. Export it so the child process lands in the same tree this launcher manages -
+# under systemd the working directory is not AGENT_HOME unless the unit says so.
+export AGENT_HOME
 CURRENT_DIR="$AGENT_HOME/current"
 BACKUP_DIR="$AGENT_HOME/backup"
 UPDATE_DIR="$AGENT_HOME/update"
@@ -69,6 +73,7 @@ rollback() {
 
 perform_update() {
     if [ ! -f "$RESTART_SIGNAL" ]; then
+        log "ERROR" "No restart signal found at $RESTART_SIGNAL (agent and launcher disagree on AGENT_HOME?)"
         return 1
     fi
 

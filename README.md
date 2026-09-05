@@ -258,7 +258,7 @@ RDP logoff.
 | Variable                    | Default                                           | Description                          |
 | --------------------------- | ------------------------------------------------- | ------------------------------------ |
 | `HOST`                      | `https://hydra.sythir.com/api/deployment-gateway` | Gateway URL                          |
-| `AGENT_HOME`                | `~/HydraAgent`                                    | Agent installation directory         |
+| `AGENT_HOME`                | Launcher script directory                         | Agent installation directory         |
 | `DEPLOYMENT_DIRECTORY`      | `~/HydraDeploys`                                  | Custom directory for deployments     |
 | `DEPLOY_LOGS_DIRECTORY`     | -                                                 | Custom directory for deployment logs |
 | `DEPLOY_TIMEOUT_IN_SECONDS` | `60`                                              | Deployment script timeout            |
@@ -287,6 +287,17 @@ The agent supports automatic updates triggered from the Hydra server.
 4. Launcher replaces binary and restarts agent
 5. Health check verifies new version started successfully
 6. If health check fails, launcher rolls back to previous version
+
+### AGENT_HOME
+
+Updates are handed from the agent to the launcher through files under `AGENT_HOME`
+(`update/agent.exe.new`, `config/restart.signal`, `update/update.lock`), so **both sides must
+resolve the same directory**. The launchers take `AGENT_HOME` from their own location and export it
+to the agent, which falls back to its working directory if the variable is unset.
+
+Do not run the agent binary directly from an unrelated working directory without setting
+`AGENT_HOME` — it will download updates into a tree the launcher never inspects, and the update will
+report as `restarting` on the server but never apply.
 
 ---
 
@@ -326,6 +337,16 @@ journalctl -u hydra-agent -f
 1. Check launcher logs: `~/HydraAgent/logs/launcher.log`
 2. Verify write permissions to `~/HydraAgent/` directory
 3. Check disk space
+
+If the launcher logs `No restart signal found at ... (agent and launcher disagree on AGENT_HOME?)`,
+the agent wrote the update somewhere else. Confirm the installed `AGENT_HOME` (the installer prints
+it) and that the agent is started through the launcher rather than directly.
+
+If a new binary starts but never passes the health check, the launcher rolls back and keeps that
+run's output at `logs/agent-failed-update.log`.
+
+If the server reports `Update already in progress` and no update is running, delete
+`AGENT_HOME/update/update.lock`. Locks older than 15 minutes are ignored automatically.
 
 ### Agent keeps restarting
 

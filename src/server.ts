@@ -10,7 +10,7 @@ import {
   parseDeploymentDirectory,
 } from './config/environment';
 import { DEPLOYMENT_STATUS, SOCKET_EVENTS } from './config/constants';
-import { handleAgentUpdate, signalHealthy, isPostUpdateStartup } from './update';
+import { handleAgentUpdate, signalHealthy, isPostUpdateStartup, releaseUpdateLock } from './update';
 import { AgentUpdateMessage, UPDATE_STATUS } from './types/update';
 import { IisDeploymentMessageDto } from './types/iis';
 import * as processManager from './utils/processManager';
@@ -47,6 +47,9 @@ socket.on(SOCKET_EVENTS.CONNECT, async () => {
     try {
       await signalHealthy();
       console.log('Health check signal sent to launcher');
+      // Drop the lock ourselves as soon as we are up: the launcher clears it too, but only this
+      // side is guaranteed to run, and a lock left behind blocks every later update.
+      await releaseUpdateLock();
     } catch (err) {
       console.error('Failed to signal health:', err);
     }

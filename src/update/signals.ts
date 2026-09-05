@@ -1,10 +1,30 @@
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
-import { PATHS, getNewBinaryPath } from '../config/paths';
+import { PATHS } from '../config/paths';
+
+// A lock older than this is treated as leftover from an update that never finished (the agent was
+// killed, or an older build wrote the lock somewhere the launcher could not clean up). Without
+// this, one broken update blocks every future update with "Update already in progress".
+const STALE_LOCK_MS = 15 * 60 * 1000;
 
 export async function isUpdateLocked(): Promise<boolean> {
-  return existsSync(PATHS.UPDATE_LOCK);
+  if (!existsSync(PATHS.UPDATE_LOCK)) {
+    return false;
+  }
+
+  try {
+    const stats = await fs.stat(PATHS.UPDATE_LOCK);
+    if (Date.now() - stats.mtimeMs > STALE_LOCK_MS) {
+      console.warn(`Ignoring stale update lock at ${PATHS.UPDATE_LOCK}`);
+      await releaseUpdateLock();
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
+  return true;
 }
 
 export async function acquireUpdateLock(updateId: string): Promise<void> {

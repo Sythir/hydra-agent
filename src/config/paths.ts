@@ -1,7 +1,14 @@
-import os from 'os';
 import path from 'path';
 
-const AGENT_HOME = process.env.AGENT_HOME || path.join(os.homedir(), 'HydraAgent');
+function resolveAgentHome(): string {
+  const fromEnv = process.env.AGENT_HOME;
+  if (fromEnv) {
+    return path.resolve(fromEnv);
+  }
+  return process.cwd();
+}
+
+const AGENT_HOME = resolveAgentHome();
 
 export const PATHS = {
   AGENT_HOME,
