@@ -4,6 +4,7 @@ export interface IisBinding {
   ipAddress: string;
   hostHeader: string;
   sslCertificateThumbprint?: string;
+  sslCertificateStoreName?: string;
   requireSni?: boolean;
 }
 
@@ -95,5 +96,6 @@ export interface ExistingBinding {
   ipAddress: string;
   hostHeader: string;
   thumbprint?: string;
+  certificateStoreName?: string;
   sslFlags?: number;
 }

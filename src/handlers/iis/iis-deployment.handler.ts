@@ -12,7 +12,7 @@ import { ExecutionResultReturnType } from '../../types/ExecutionResultReturnType
 import { checkIisAvailable } from './powershell.service';
 import { ensureAppPool, stopAppPool, startAppPool, deleteAppPool, appPoolExists } from './iis-app-pool.service';
 import { ensureSite, stopSite, startSite, deleteSite, siteExists, getSiteConfig, deleteVirtualDirectory, updateSitePhysicalPath, setSiteAppPool, validateSiteExists } from './iis-site.service';
-import { configureBindings, getExistingBindings, restoreBindings, assertNoBindingConflicts } from './iis-binding.service';
+import { configureBindings, getExistingBindings, restoreBindings, assertNoBindingConflicts, assertCertificatesAvailable } from './iis-binding.service';
 import { configureAuthentication } from './iis-auth.service';
 import { deployConfigFiles } from './iis-config.service';
 
@@ -91,6 +91,13 @@ export async function handleIisDeployment(
     }
 
     await assertNoBindingConflicts(message.site.name, message.site.bindings, logger, deployFolder);
+    await assertCertificatesAvailable(
+      message.site.name,
+      message.site.bindings,
+      message.site.preserveSslCertificates,
+      logger,
+      deployFolder,
+    );
 
     emitProgress(socket, deploymentId, 'downloading', 'Downloading application package...', 10);
 
