@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@sythir/config-merger':
-        specifier: ^1.0.0
-        version: 1.0.0
+        specifier: ^1.0.1
+        version: 1.0.1
       socket.io-client:
         specifier: ^4.8.1
         version: 4.8.1
@@ -106,8 +106,8 @@ packages:
   '@socket.io/component-emitter@3.1.2':
     resolution: {integrity: sha512-9BCxFwvbGg/RsZK9tjXd8s4UcwR0MWeFQ1XEKIQVVvAGJyINdrqKMcTRyLoK8Rse1GjzLV9cwjWV1olXRWEXVA==}
 
-  '@sythir/config-merger@1.0.0':
-    resolution: {integrity: sha512-yg6CLV/wvJvpXlHIhIs5ZWsHf/a3yPR1vo+nMAUxHS97HcZZQImpo2wOFAFXzPIXm98kSV9whvQa11UL75dqdw==, tarball: https://npm.pkg.github.com/download/@sythir/config-merger/1.0.0/f5349877468eae8f40b09c42c1adcd9db1e14023}
+  '@sythir/config-merger@1.0.1':
+    resolution: {integrity: sha512-/tV3DSzR0wZPA8RsXe6ZhdroqeFGAqam7dep2pl4U6f10Zu2EZHLhF6neGbZTlRlgVNoyoi4lc8ru3AAk5ehRw==, tarball: https://npm.pkg.github.com/download/@sythir/config-merger/1.0.1/6c43299cbbf5c83f29cf3e4c175e3e6b32b2b70a}
 
   '@tsconfig/node10@1.0.11':
     resolution: {integrity: sha512-DcRjDCujK/kCk/cUe8Xz8ZSpm8mS3mNNpta+jGCA6USEDfktlNvm1+IuZ9eTcDbNk41BHwpHHeW+N1lKCz4zOw==}
@@ -794,7 +794,7 @@ snapshots:
 
   '@socket.io/component-emitter@3.1.2': {}
 
-  '@sythir/config-merger@1.0.0':
+  '@sythir/config-merger@1.0.1':
     dependencies:
       fast-xml-parser: 5.3.6
 
