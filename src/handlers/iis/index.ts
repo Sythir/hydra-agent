@@ -6,3 +6,4 @@ export * from './iis-site.service';
 export * from './iis-binding.service';
 export * from './iis-auth.service';
 export * from './iis-config.service';
+export * from './iis-warmup.service';

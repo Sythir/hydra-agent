@@ -41,8 +41,14 @@ export interface IisAuthenticationConfig {
 }
 
 export interface IisDeploymentOptions {
+  /**
+   * @deprecated Ignored. Deployments swap the new release in and recycle the app pool instead of
+   * stopping the site, so requests wait for the new worker rather than being refused.
+   */
   stopSiteBeforeDeploy: boolean;
+  /** @deprecated Ignored, see {@link IisDeploymentOptions.stopSiteBeforeDeploy}. */
   stopAppPoolBeforeDeploy: boolean;
+  /** When false the release is staged on disk but the site is left pointing at the old one. */
   startAfterSuccessfulDeployment: boolean;
 }
 

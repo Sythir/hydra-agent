@@ -68,6 +68,11 @@ export async function configureAppPool(
   const startMode = config.startMode === 'AlwaysRunning' ? 1 : 0;
   commands.push(`Set-ItemProperty $appPoolPath -Name "startMode" -Value ${startMode}`);
 
+  // Overlapped rotation is what keeps a deployment from dropping traffic: on a recycle IIS spins up
+  // the replacement worker first and only then drains the old one, so requests queue in HTTP.SYS
+  // instead of getting a connection reset. It defaults to enabled, but a hardened pool may have it off.
+  commands.push(`Set-ItemProperty $appPoolPath -Name "recycling.disallowOverlappingRotation" -Value $false`);
+
   await configureAppPoolIdentity(config, commands, logger, deployFolder);
 
   const script = commands.join('\n') + '\nWrite-Output "App pool configured successfully"';
@@ -139,6 +144,38 @@ export async function startAppPool(
       Write-Output "App pool started"
     } else {
       Write-Output "App pool already started or does not exist"
+    }
+    `,
+    logger,
+    deployFolder,
+    DeploymentErrorCodes.IIS_START_FAILED,
+  );
+}
+
+/**
+ * Recycles the pool so the new physical path is picked up. With overlapped rotation this is a warm
+ * swap: the replacement worker boots while the old one still answers, so in-flight and incoming
+ * requests wait rather than fail. A stopped pool is started instead - there is nothing to recycle.
+ */
+export async function recycleAppPool(
+  appPoolName: string,
+  logger: LoggerFunc,
+  deployFolder: string,
+): Promise<void> {
+  logger(deployFolder, 'info', `Recycling application pool: ${appPoolName}`);
+  await executePowerShellOrThrow(
+    `
+    Import-Module WebAdministration
+    $appPool = Get-Item "IIS:\\AppPools\\${escapePowerShellString(appPoolName)}" -ErrorAction SilentlyContinue
+    if (-not $appPool) {
+      throw "Application pool '${escapePowerShellString(appPoolName)}' does not exist"
+    }
+    if ($appPool.State -eq 'Started') {
+      Restart-WebAppPool -Name '${escapePowerShellString(appPoolName)}'
+      Write-Output "App pool recycled"
+    } else {
+      Start-WebAppPool -Name '${escapePowerShellString(appPoolName)}'
+      Write-Output "App pool started"
     }
     `,
     logger,

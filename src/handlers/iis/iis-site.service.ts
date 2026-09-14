@@ -342,13 +342,26 @@ export async function configureVirtualDirectories(
   return createdVdirs;
 }
 
+export interface EnsureSiteResult {
+  createdVdirs: string[];
+  created: boolean;
+}
+
+/**
+ * Prepares the site without pointing it at the new release yet.
+ *
+ * An existing site keeps serving from its current physical path through this call - the cutover to
+ * `physicalPath` is a separate, deliberate step (see `swapSitePhysicalPath` in the deployment
+ * handler) that happens once the new folder is fully staged. A site that has to be created has no
+ * traffic to protect, so it is created on the new path straight away.
+ */
 export async function ensureSite(
   config: IisSiteConfig,
   physicalPath: string,
   appPoolName: string,
   logger: LoggerFunc,
   deployFolder: string,
-): Promise<string[]> {
+): Promise<EnsureSiteResult> {
   const exists = await siteExists(config.name, logger, deployFolder);
 
   if (!exists) {
@@ -358,7 +371,6 @@ export async function ensureSite(
       throw new Error(`Website '${config.name}' does not exist and createIfNotExists is false`);
     }
   } else {
-    await updateSitePhysicalPath(config.name, physicalPath, logger, deployFolder);
     await setSiteAppPool(config.name, appPoolName, logger, deployFolder);
   }
 
@@ -366,5 +378,5 @@ export async function ensureSite(
 
   logger(deployFolder, 'info', `Website '${config.name}' configured successfully`);
 
-  return createdVdirs;
+  return { createdVdirs, created: !exists };
 }

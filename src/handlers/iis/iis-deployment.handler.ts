@@ -10,11 +10,12 @@ import { cleanupOldDeployments } from '../../utils/CleanupOldDeployments';
 import { ExecutionResultReturnType } from '../../types/ExecutionResultReturnType';
 
 import { checkIisAvailable } from './powershell.service';
-import { ensureAppPool, stopAppPool, startAppPool, deleteAppPool, appPoolExists } from './iis-app-pool.service';
-import { ensureSite, stopSite, startSite, deleteSite, siteExists, getSiteConfig, deleteVirtualDirectory, updateSitePhysicalPath, setSiteAppPool, validateSiteExists } from './iis-site.service';
+import { ensureAppPool, recycleAppPool, deleteAppPool, appPoolExists } from './iis-app-pool.service';
+import { ensureSite, startSite, deleteSite, siteExists, getSiteConfig, deleteVirtualDirectory, updateSitePhysicalPath, setSiteAppPool, validateSiteExists } from './iis-site.service';
 import { configureBindings, getExistingBindings, restoreBindings, assertNoBindingConflicts, assertCertificatesAvailable } from './iis-binding.service';
 import { configureAuthentication } from './iis-auth.service';
 import { deployConfigFiles } from './iis-config.service';
+import { warmupSite } from './iis-warmup.service';
 
 
 function emitProgress(
@@ -45,6 +46,19 @@ function getDeploymentPath(message: IisDeploymentMessageDto): string {
   );
 }
 
+/**
+ * Deploys a release to IIS without taking the site down.
+ *
+ * Every release lands in its own versioned folder, so the running site is never written to. The
+ * package is downloaded, unpacked and fully configured while the old release keeps serving, and
+ * only then is the site's physical path pointed at the new folder and the app pool recycled. With
+ * overlapped rotation IIS boots the replacement worker before draining the old one, so requests
+ * that arrive during the cutover queue in the HTTP.SYS request queue and are answered by the new
+ * worker instead of being refused.
+ *
+ * This is why the site and app pool are never stopped here - a stopped site refuses the connection
+ * outright and a stopped app pool answers 503, and both are visible failures for callers.
+ */
 export async function handleIisDeployment(
   message: IisDeploymentMessageDto,
   logger: LoggerFunc,
@@ -59,10 +73,7 @@ export async function handleIisDeployment(
     siteCreated: false,
     originalSiteConfig: null as { physicalPath: string; appPool: string; bindings: ExistingBinding[] } | null,
     virtualDirectoriesCreated: [] as string[],
-    stopped: {
-      appPool: false,
-      site: false,
-    },
+    swapped: false,
   };
 
   const rollbackActions: Array<() => Promise<void>> = [];
@@ -78,6 +89,15 @@ export async function handleIisDeployment(
 
     logger(deployFolder, 'info', `Starting IIS deployment for: ${message.application.name}`);
     logger(deployFolder, 'info', `Deployment folder: ${deployFolder}`);
+
+    if (message.options.stopSiteBeforeDeploy || message.options.stopAppPoolBeforeDeploy) {
+      logger(
+        deployFolder,
+        'info',
+        'Ignoring stopSiteBeforeDeploy/stopAppPoolBeforeDeploy: IIS deployments swap the release in ' +
+          'without stopping, so requests wait for the new worker rather than being refused',
+      );
+    }
 
     const iisAvailable = await checkIisAvailable(logger, deployFolder);
     if (!iisAvailable) {
@@ -131,19 +151,10 @@ export async function handleIisDeployment(
       return { succeeded: false, output: `Failed to extract package: ${errorMessage}` };
     }
 
-    emitProgress(socket, deploymentId, 'stopping-resources', 'Stopping IIS resources...', 25);
-
-    if (message.options.stopAppPoolBeforeDeploy) {
-      logger(deployFolder, 'info', 'Stopping app pool before deployment');
-      await stopAppPool(message.appPool.name, logger, deployFolder);
-      deploymentState.stopped.appPool = true;
-    }
-
-    if (message.options.stopSiteBeforeDeploy) {
-      logger(deployFolder, 'info', 'Stopping site before deployment');
-      await stopSite(message.site.name, logger, deployFolder);
-      deploymentState.stopped.site = true;
-    }
+    // Config files are written while the folder is still offline. Writing them after the swap would
+    // drop a half-configured app under a live site and trigger a second, unnecessary app restart.
+    emitProgress(socket, deploymentId, 'deploying-configs', 'Deploying configuration files...', 25);
+    await deployConfigFiles(message.configs, deployFolder, logger);
 
     emitProgress(socket, deploymentId, 'configuring-app-pool', `Configuring app pool: ${message.appPool.name}...`, 40);
 
@@ -164,13 +175,13 @@ export async function handleIisDeployment(
       ]);
       if (siteConfig) {
         deploymentState.originalSiteConfig = { ...siteConfig, bindings: existingBindings };
+        logger(deployFolder, 'info', `Current release is served from: ${siteConfig.physicalPath}`);
       }
-    } else {
-      deploymentState.siteCreated = true;
     }
 
-    const createdVdirs = await ensureSite(message.site, deployFolder, message.appPool.name, logger, deployFolder);
+    const { createdVdirs, created } = await ensureSite(message.site, deployFolder, message.appPool.name, logger, deployFolder);
     deploymentState.virtualDirectoriesCreated = createdVdirs;
+    deploymentState.siteCreated = created;
 
     emitProgress(socket, deploymentId, 'configuring-bindings', 'Configuring site bindings...', 65);
     await configureBindings(
@@ -184,19 +195,31 @@ export async function handleIisDeployment(
     emitProgress(socket, deploymentId, 'configuring-auth', 'Configuring authentication...', 75);
     await configureAuthentication(message.site.name, message.authentication, logger, deployFolder);
 
-    emitProgress(socket, deploymentId, 'deploying-configs', 'Deploying configuration files...', 85);
-    await deployConfigFiles(message.configs, deployFolder, logger);
-
     if (message.options.startAfterSuccessfulDeployment) {
-      emitProgress(socket, deploymentId, 'starting-resources', 'Starting IIS resources...', 95);
+      // The cutover. A freshly created site is already on the new path, so only an existing site
+      // needs the swap; the recycle then hands traffic to a worker running the new release.
+      emitProgress(socket, deploymentId, 'swapping', 'Switching site to the new release...', 85);
 
-      logger(deployFolder, 'info', 'Starting app pool after deployment');
-      await startAppPool(message.appPool.name, logger, deployFolder);
+      if (!deploymentState.siteCreated) {
+        await updateSitePhysicalPath(message.site.name, deployFolder, logger, deployFolder);
+        deploymentState.swapped = true;
+      }
 
-      logger(deployFolder, 'info', 'Starting site after deployment');
+      await recycleAppPool(message.appPool.name, logger, deployFolder);
       await startSite(message.site.name, logger, deployFolder, message.site.bindings);
+
+      emitProgress(socket, deploymentId, 'warmup', 'Waiting for the new release to serve requests...', 95);
+      await warmupSite(message.site.name, message.site.bindings, logger, deployFolder);
+    } else {
+      logger(
+        deployFolder,
+        'info',
+        'startAfterSuccessfulDeployment is false: staged the release but left the site on its current path',
+      );
     }
 
+    // Only prune once the new worker is confirmed up - until then the previous folder may still be
+    // serving requests from the draining worker.
     await cleanupOldDeployments(deployFolder, path.dirname(deployFolder), keepDeployments, logger);
 
     emitProgress(socket, deploymentId, 'complete', 'IIS deployment completed successfully', 100);
@@ -247,6 +270,11 @@ export async function handleIisDeployment(
         await updateSitePhysicalPath(message.site.name, deploymentState.originalSiteConfig.physicalPath, logger, deployFolder || '.');
         await setSiteAppPool(message.site.name, deploymentState.originalSiteConfig.appPool, logger, deployFolder || '.');
         await restoreBindings(message.site.name, deploymentState.originalSiteConfig.bindings, logger, deployFolder || '.');
+
+        // Without a recycle the pool keeps serving the failed release from its already-loaded worker.
+        if (deploymentState.swapped) {
+          await recycleAppPool(message.appPool.name, logger, deployFolder || '.');
+        }
       } catch (rollbackError) {
         logger(deployFolder || '.', 'error', `Failed to restore site configuration: ${rollbackError}`);
       }
@@ -258,24 +286,6 @@ export async function handleIisDeployment(
         await deleteAppPool(message.appPool.name, logger, deployFolder || '.');
       } catch (rollbackError) {
         logger(deployFolder || '.', 'error', `Failed to delete app pool: ${rollbackError}`);
-      }
-    }
-
-    if (deploymentState.stopped.site && !deploymentState.siteCreated) {
-      logger(deployFolder || '.', 'info', 'Rollback: Starting site');
-      try {
-        await startSite(message.site.name, logger, deployFolder || '.');
-      } catch (rollbackError) {
-        logger(deployFolder || '.', 'error', `Failed to start site: ${rollbackError}`);
-      }
-    }
-
-    if (deploymentState.stopped.appPool && !deploymentState.appPoolCreated) {
-      logger(deployFolder || '.', 'info', 'Rollback: Starting app pool');
-      try {
-        await startAppPool(message.appPool.name, logger, deployFolder || '.');
-      } catch (rollbackError) {
-        logger(deployFolder || '.', 'error', `Failed to start app pool: ${rollbackError}`);
       }
     }
 
