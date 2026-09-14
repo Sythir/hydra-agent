@@ -218,9 +218,11 @@ export async function handleIisDeployment(
       );
     }
 
-    // Only prune once the new worker is confirmed up - until then the previous folder may still be
-    // serving requests from the draining worker.
-    await cleanupOldDeployments(deployFolder, path.dirname(deployFolder), keepDeployments, logger);
+    // Only prune once the new worker is confirmed up, and never prune below two releases: after an
+    // overlapped recycle the old worker drains for up to its shutdownTimeLimit, and it is still
+    // reading from the previous folder while it does.
+    const keepForIis = Math.max(keepDeployments, 2);
+    await cleanupOldDeployments(deployFolder, path.dirname(deployFolder), keepForIis, logger);
 
     emitProgress(socket, deploymentId, 'complete', 'IIS deployment completed successfully', 100);
     logger(deployFolder, 'info', 'IIS deployment completed successfully');

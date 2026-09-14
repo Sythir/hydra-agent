@@ -54,6 +54,13 @@ export async function configureAppPool(
     `$appPoolPath = '${appPoolPath}'`,
   ];
 
+  // Set this before anything else. Overlapped rotation is what keeps a deployment from dropping
+  // traffic - on a recycle IIS spins up the replacement worker first and only then drains the old
+  // one, so requests queue in HTTP.SYS instead of getting a connection reset. It has to land first
+  // because the property changes below each commit separately and themselves trigger a recycle; on
+  // a pool that had overlapping rotation disabled, that recycle would drop requests.
+  commands.push(`Set-ItemProperty $appPoolPath -Name "recycling.disallowOverlappingRotation" -Value $false`);
+
   commands.push(
     `Set-ItemProperty $appPoolPath -Name "managedRuntimeVersion" -Value '${escapePowerShellString(config.managedRuntimeVersion)}'`,
   );
@@ -67,11 +74,6 @@ export async function configureAppPool(
 
   const startMode = config.startMode === 'AlwaysRunning' ? 1 : 0;
   commands.push(`Set-ItemProperty $appPoolPath -Name "startMode" -Value ${startMode}`);
-
-  // Overlapped rotation is what keeps a deployment from dropping traffic: on a recycle IIS spins up
-  // the replacement worker first and only then drains the old one, so requests queue in HTTP.SYS
-  // instead of getting a connection reset. It defaults to enabled, but a hardened pool may have it off.
-  commands.push(`Set-ItemProperty $appPoolPath -Name "recycling.disallowOverlappingRotation" -Value $false`);
 
   await configureAppPoolIdentity(config, commands, logger, deployFolder);
 
