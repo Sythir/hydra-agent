@@ -288,8 +288,8 @@ async function collectCertificateRequests(
 }
 
 /**
- * Pre-flight check: every certificate the deployment will need must exist and be usable before the
- * live bindings are torn down.
+ * Pre-flight check: every certificate the deployment will need must exist and be usable before any
+ * binding is changed.
  */
 export async function assertCertificatesAvailable(
   siteName: string,
@@ -398,28 +398,6 @@ export async function assertNoBindingConflicts(
     `Cannot configure bindings for site '${siteName}': ${details}. Remove or change the conflicting binding(s) first.`,
     DeploymentErrorCodes.IIS_BINDING_CONFIG_FAILED,
     { conflicts },
-  );
-}
-
-export async function removeAllBindings(
-  siteName: string,
-  logger: LoggerFunc,
-  deployFolder: string,
-): Promise<void> {
-  logger(deployFolder, 'info', `Removing all existing bindings from site: ${siteName}`);
-  await executePowerShellOrThrow(
-    `
-    Import-Module WebAdministration
-    Get-WebBinding -Name '${escapePowerShellString(siteName)}' | Remove-WebBinding -Confirm:$false
-    $remaining = @(Get-WebBinding -Name '${escapePowerShellString(siteName)}').Count
-    if ($remaining -gt 0) {
-      throw "Failed to remove all bindings, $remaining binding(s) remain"
-    }
-    Write-Output "All bindings removed"
-    `,
-    logger,
-    deployFolder,
-    DeploymentErrorCodes.IIS_BINDING_CONFIG_FAILED,
   );
 }
 
@@ -550,6 +528,92 @@ export async function addHttpsBinding(
   }
 }
 
+export interface BindingChangePlan {
+  /** Bindings on the site that the desired configuration no longer contains. */
+  remove: ExistingBinding[];
+  /** Desired bindings the site does not have yet. */
+  add: IisBinding[];
+  /** Bindings whose SNI flag changed - sslFlags is fixed at creation, so these must be rebuilt. */
+  recreate: IisBinding[];
+  /** Bindings that are correct except for the certificate, which can be swapped in place. */
+  reassignCertificate: IisBinding[];
+  /** Bindings that already match and must not be touched. */
+  unchanged: IisBinding[];
+}
+
+/**
+ * Works out the smallest set of changes that turns the site's current bindings into the desired
+ * ones. Pure, so the decisions can be tested without an IIS host.
+ *
+ * The point is to touch nothing in the common case. Removing and re-adding every binding
+ * de-registers the site's URLs from HTTP.SYS, and for the moment they are gone the site is not
+ * listening at all - which would undo the whole reason deployments no longer stop the site.
+ */
+export function planBindingChanges(
+  desired: IisBinding[],
+  current: ExistingBinding[],
+  certificates: Map<string, ResolvedCertificate>,
+): BindingChangePlan {
+  const plan: BindingChangePlan = { remove: [], add: [], recreate: [], reassignCertificate: [], unchanged: [] };
+
+  const desiredKeys = new Set(
+    desired.map((binding) => bindingKey(binding.protocol, binding.ipAddress, binding.port, binding.hostHeader)),
+  );
+  const currentByKey = new Map(
+    current.map((binding) => [bindingKey(binding.protocol, binding.ipAddress, binding.port, binding.hostHeader), binding]),
+  );
+
+  for (const existing of current) {
+    const key = bindingKey(existing.protocol, existing.ipAddress, existing.port, existing.hostHeader);
+    if (!desiredKeys.has(key)) {
+      plan.remove.push(existing);
+    }
+  }
+
+  for (const binding of desired) {
+    const key = bindingKey(binding.protocol, binding.ipAddress, binding.port, binding.hostHeader);
+    const existing = currentByKey.get(key);
+
+    if (!existing) {
+      plan.add.push(binding);
+      continue;
+    }
+
+    if (binding.protocol !== 'https') {
+      plan.unchanged.push(binding);
+      continue;
+    }
+
+    if ((existing.sslFlags ?? 0) !== (binding.requireSni ? 1 : 0)) {
+      plan.recreate.push(binding);
+      continue;
+    }
+
+    const wanted = certificates.get(certificateKey(binding.port, binding.hostHeader));
+    if (!wanted) {
+      // Nothing resolved for this binding, so there is no certificate to apply - leave it as it is
+      // rather than stripping the one it already has.
+      plan.unchanged.push(binding);
+      continue;
+    }
+
+    const sameThumbprint = normalizeThumbprint(existing.thumbprint || '') === wanted.thumbprint;
+    const sameStore = (existing.certificateStoreName || '').toLowerCase() === wanted.store.toLowerCase();
+
+    if (sameThumbprint && sameStore) {
+      plan.unchanged.push(binding);
+    } else {
+      plan.reassignCertificate.push(binding);
+    }
+  }
+
+  return plan;
+}
+
+function describeBinding(binding: IisBinding | ExistingBinding): string {
+  return `${binding.protocol} ${binding.ipAddress || '*'}:${binding.port}:${binding.hostHeader || '(none)'}`;
+}
+
 export async function configureBindings(
   siteName: string,
   bindings: IisBinding[],
@@ -562,20 +626,52 @@ export async function configureBindings(
     return;
   }
 
-  logger(deployFolder, 'info', `Configuring ${bindings.length} binding(s) for site: ${siteName}`);
-
   if (preserveSslCertificates) {
     logger(deployFolder, 'info', 'Preserving existing SSL certificates');
   }
 
-  // Resolve every certificate before removing anything: a certificate problem must not leave the
-  // site without bindings.
+  // Resolve every certificate before changing anything: a certificate problem must not leave the
+  // site with a binding it cannot serve.
   const requests = await collectCertificateRequests(siteName, bindings, preserveSslCertificates, logger, deployFolder);
   const certificates = await resolveCertificateStores(requests, logger, deployFolder);
 
-  await removeAllBindings(siteName, logger, deployFolder);
+  let current: ExistingBinding[] = [];
+  try {
+    current = await getExistingBindings(siteName, logger, deployFolder);
+  } catch (error) {
+    logger(
+      deployFolder,
+      'warning',
+      `Could not read current bindings of site '${siteName}', treating it as having none: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 
-  for (const binding of bindings) {
+  const plan = planBindingChanges(bindings, current, certificates);
+
+  if (plan.remove.length === 0 && plan.add.length === 0 && plan.recreate.length === 0 && plan.reassignCertificate.length === 0) {
+    logger(deployFolder, 'info', `All ${plan.unchanged.length} binding(s) already match, leaving them untouched`);
+    return;
+  }
+
+  logger(
+    deployFolder,
+    'info',
+    `Reconciling bindings for site '${siteName}': ${plan.unchanged.length} unchanged, ${plan.add.length} to add, ` +
+      `${plan.remove.length} to remove, ${plan.recreate.length} to rebuild, ${plan.reassignCertificate.length} certificate(s) to swap`,
+  );
+
+  // Removals first so a binding that only moved (a changed host header, say) frees its old
+  // registration before the replacement claims it.
+  for (const binding of plan.remove) {
+    await removeBinding(siteName, binding.protocol, binding.ipAddress, binding.port, binding.hostHeader, logger, deployFolder);
+  }
+
+  for (const binding of plan.recreate) {
+    logger(deployFolder, 'info', `SNI changed, rebuilding binding: ${describeBinding(binding)}`);
+    await removeBinding(siteName, binding.protocol, binding.ipAddress, binding.port, binding.hostHeader, logger, deployFolder);
+  }
+
+  for (const binding of [...plan.add, ...plan.recreate]) {
     if (binding.protocol === 'https') {
       await addHttpsBinding(siteName, binding, certificates.get(certificateKey(binding.port, binding.hostHeader)), logger, deployFolder);
     } else {
@@ -583,7 +679,18 @@ export async function configureBindings(
     }
   }
 
-  logger(deployFolder, 'info', 'All bindings configured successfully');
+  // An existing binding only needs its certificate swapped - AddSslCertificate replaces the
+  // HTTP.SYS registration in place, so the binding never stops answering.
+  for (const binding of plan.reassignCertificate) {
+    const certificate = certificates.get(certificateKey(binding.port, binding.hostHeader));
+    if (!certificate) {
+      continue;
+    }
+    logger(deployFolder, 'info', `Certificate changed, updating binding: ${describeBinding(binding)}`);
+    await assignCertificate(siteName, binding.port, binding.hostHeader, certificate, logger, deployFolder);
+  }
+
+  logger(deployFolder, 'info', 'Bindings reconciled successfully');
 }
 
 async function resolveCertificateForRestore(

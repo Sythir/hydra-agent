@@ -7,3 +7,4 @@ export * from './iis-binding.service';
 export * from './iis-auth.service';
 export * from './iis-config.service';
 export * from './iis-warmup.service';
+export * from './iis-app-init.service';

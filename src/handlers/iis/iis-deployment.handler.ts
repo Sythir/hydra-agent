@@ -16,6 +16,7 @@ import { configureBindings, getExistingBindings, restoreBindings, assertNoBindin
 import { configureAuthentication } from './iis-auth.service';
 import { deployConfigFiles } from './iis-config.service';
 import { warmupSite } from './iis-warmup.service';
+import { configureApplicationInitialization } from './iis-app-init.service';
 
 
 function emitProgress(
@@ -41,8 +42,9 @@ function getDeploymentPath(message: IisDeploymentMessageDto): string {
   return path.join(
     folderLocation,
     message.project.code,
+    message.environment.name,
     message.application.code,
-    `${message.version.version}-${uniqueHash}`,
+    `${message.version.version}-${uniqueHash.substring(0, 5)}`,
   );
 }
 
@@ -195,6 +197,17 @@ export async function handleIisDeployment(
     emitProgress(socket, deploymentId, 'configuring-auth', 'Configuring authentication...', 75);
     await configureAuthentication(message.site.name, message.authentication, logger, deployFolder);
 
+    // Must be in place before the recycle below, otherwise IIS has no reason to warm the
+    // replacement worker and the cutover hands the cold release to the first caller.
+    emitProgress(socket, deploymentId, 'configuring-preload', 'Enabling preload for the new release...', 80);
+    const preloadEnabled = await configureApplicationInitialization(
+      message.site.name,
+      message.site.initializationPage ?? '',
+      message.appPool.startMode,
+      logger,
+      deployFolder,
+    );
+
     if (message.options.startAfterSuccessfulDeployment) {
       // The cutover. A freshly created site is already on the new path, so only an existing site
       // needs the swap; the recycle then hands traffic to a worker running the new release.
@@ -208,7 +221,15 @@ export async function handleIisDeployment(
       await recycleAppPool(message.appPool.name, logger, deployFolder);
       await startSite(message.site.name, logger, deployFolder, message.site.bindings);
 
-      emitProgress(socket, deploymentId, 'warmup', 'Waiting for the new release to serve requests...', 95);
+      // With preload on, IIS has already warmed the worker behind the old one and this only
+      // confirms it. Without preload this is where the cold start actually surfaces.
+      emitProgress(
+        socket,
+        deploymentId,
+        'warmup',
+        preloadEnabled ? 'Confirming the new release is serving...' : 'Waiting for the new release to serve requests...',
+        95,
+      );
       await warmupSite(message.site.name, message.site.bindings, logger, deployFolder);
     } else {
       logger(

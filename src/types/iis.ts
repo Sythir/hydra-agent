@@ -19,6 +19,12 @@ export interface IisSiteConfig {
   bindings: IisBinding[];
   preserveSslCertificates: boolean;
   virtualDirectories: IisVirtualDirectory[];
+  /**
+   * Path Application Initialization requests to warm the new release before it receives traffic.
+   * Defaults to '/'. Point it at a route that responds directly - a path that redirects is answered
+   * by the redirect and warms nothing.
+   */
+  initializationPage?: string;
 }
 
 export interface IisAppPoolConfig {
