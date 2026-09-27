@@ -30,6 +30,7 @@ export const DeploymentErrorCodes = {
   IIS_STOP_FAILED: 'IIS_STOP_FAILED',
   IIS_POWERSHELL_ERROR: 'IIS_POWERSHELL_ERROR',
   CONFIG_MERGE_FAILED: 'CONFIG_MERGE_FAILED',
+  IIS_SSL_PROVISIONING_FAILED: 'IIS_SSL_PROVISIONING_FAILED',
 } as const;
 
 export type DeploymentErrorCode = typeof DeploymentErrorCodes[keyof typeof DeploymentErrorCodes];

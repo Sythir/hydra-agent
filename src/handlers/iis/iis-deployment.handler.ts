@@ -192,6 +192,7 @@ export async function handleIisDeployment(
       message.site.preserveSslCertificates,
       logger,
       deployFolder,
+      socket,
     );
 
     emitProgress(socket, deploymentId, 'configuring-auth', 'Configuring authentication...', 75);

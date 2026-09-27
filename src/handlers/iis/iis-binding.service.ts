@@ -2,6 +2,8 @@ import { IisBinding, ExistingBinding } from '../../types/iis';
 import { LoggerFunc } from '../../utils/logMessage';
 import { DeploymentError, DeploymentErrorCodes } from '../../types/DeploymentError';
 import { executePowerShellOrThrow, escapePowerShellString } from './powershell.service';
+import { provisionCertificate, ManagedSslResult } from './iis-ssl.service';
+import { Socket } from 'socket.io-client';
 
 /**
  * Stores that are searched when locating an SSL certificate by thumbprint. IIS serves certificates
@@ -270,6 +272,10 @@ async function collectCertificateRequests(
 
   const requests: CertificateRequest[] = [];
   for (const binding of httpsBindings) {
+    // Managed SSL bindings will have certificates provisioned by the SSL service; skip them here.
+    if (binding.enableManagedSsl) {
+      continue;
+    }
     const key = certificateKey(binding.port, binding.hostHeader);
     const preserved = existing.get(key);
     const thumbprint = binding.sslCertificateThumbprint || preserved?.thumbprint;
@@ -620,10 +626,13 @@ export async function configureBindings(
   preserveSslCertificates: boolean,
   logger: LoggerFunc,
   deployFolder: string,
-): Promise<void> {
+  socket?: Socket,
+): Promise<ManagedSslResult[]> {
+  const managedSslResults: ManagedSslResult[] = [];
+
   if (bindings.length === 0) {
     logger(deployFolder, 'info', 'No bindings to configure');
-    return;
+    return managedSslResults;
   }
 
   if (preserveSslCertificates) {
@@ -634,6 +643,45 @@ export async function configureBindings(
   // site with a binding it cannot serve.
   const requests = await collectCertificateRequests(siteName, bindings, preserveSslCertificates, logger, deployFolder);
   const certificates = await resolveCertificateStores(requests, logger, deployFolder);
+
+  // Provision certificates for managed SSL bindings via win-acme (Let's Encrypt).
+  const managedBindings = bindings.filter(
+    (b) => b.protocol === 'https' && b.enableManagedSsl && b.hostHeader,
+  );
+  for (const binding of managedBindings) {
+    try {
+      const result = await provisionCertificate(binding.hostHeader, siteName, logger, deployFolder);
+      managedSslResults.push(result);
+      const key = certificateKey(binding.port, binding.hostHeader);
+      certificates.set(key, { thumbprint: result.thumbprint, store: 'WebHosting' });
+
+      if (socket) {
+        socket.emit('ssl-certificate-event', {
+          event: 'ssl_certificate_issued',
+          domain: binding.hostHeader,
+          thumbprint: result.thumbprint,
+          expiryDate: result.expiryDate,
+        });
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger(deployFolder, 'error', `Failed to provision managed SSL certificate for ${binding.hostHeader}: ${errorMessage}`);
+
+      if (socket) {
+        socket.emit('ssl-certificate-event', {
+          event: 'ssl_certificate_failed',
+          domain: binding.hostHeader,
+          error: errorMessage,
+        });
+      }
+
+      throw new DeploymentError(
+        `Managed SSL certificate provisioning failed for ${binding.hostHeader}: ${errorMessage}`,
+        DeploymentErrorCodes.IIS_SSL_PROVISIONING_FAILED,
+        { hostname: binding.hostHeader },
+      );
+    }
+  }
 
   let current: ExistingBinding[] = [];
   try {
@@ -650,7 +698,7 @@ export async function configureBindings(
 
   if (plan.remove.length === 0 && plan.add.length === 0 && plan.recreate.length === 0 && plan.reassignCertificate.length === 0) {
     logger(deployFolder, 'info', `All ${plan.unchanged.length} binding(s) already match, leaving them untouched`);
-    return;
+    return managedSslResults;
   }
 
   logger(
@@ -691,6 +739,7 @@ export async function configureBindings(
   }
 
   logger(deployFolder, 'info', 'Bindings reconciled successfully');
+  return managedSslResults;
 }
 
 async function resolveCertificateForRestore(
