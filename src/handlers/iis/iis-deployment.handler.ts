@@ -1,4 +1,5 @@
 import path from 'path';
+import fs from 'fs/promises';
 import { Socket } from 'socket.io-client';
 import { IisDeploymentMessageDto, IisDeploymentResult, IisDeploymentProgress, ExistingBinding } from '../../types/iis';
 import { LoggerFunc } from '../../utils/logMessage';
@@ -151,6 +152,15 @@ export async function handleIisDeployment(
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger(deployFolder, 'error', `Failed to extract package: ${errorMessage}`);
       return { succeeded: false, output: `Failed to extract package: ${errorMessage}` };
+    }
+
+    // The deploy folder becomes the site's physical path, so a leftover package would be publicly
+    // downloadable. Abort (and roll back) rather than risk exposing it.
+    try {
+      await fs.rm(path.join(deployFolder, 'app.zip'), { force: true });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Failed to remove app.zip from deploy folder: ${errorMessage}`);
     }
 
     // Config files are written while the folder is still offline. Writing them after the swap would
