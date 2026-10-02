@@ -22,6 +22,7 @@ export const SOCKET_EVENTS = {
   LOG: 'log',
   AGENT_UPDATE_STATUS: 'agent-update-status',
   IIS_DEPLOYMENT_PROGRESS: 'iis-deployment-progress',
+  K8S_DEPLOYMENT_PROGRESS: 'k8s-deployment-progress',
 } as const;
 
 export const DEPLOYMENT_FOLDER_NAME = path.join(os.homedir(), 'HydraDeploys');

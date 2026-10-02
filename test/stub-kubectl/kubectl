@@ -1,0 +1,42 @@
+#!/usr/bin/env node
+/**
+ * Stub kubectl used by the Kubernetes handler integration test.
+ *
+ * Appends every invocation to $KUBECTL_LOG so the test can assert on the exact commands the agent
+ * issued, and fails the subcommands named in $KUBECTL_FAIL so failure paths can be exercised.
+ */
+const fs = require('fs');
+
+const args = process.argv.slice(2);
+const log = process.env.KUBECTL_LOG;
+if (log) fs.appendFileSync(log, args.join(' ') + '\n');
+
+const fail = (process.env.KUBECTL_FAIL || '').split(',').filter(Boolean);
+const line = args.join(' ');
+
+for (const pattern of fail) {
+  if (line.includes(pattern)) {
+    process.stderr.write(`stub kubectl: forced failure for "${pattern}"\n`);
+    process.exit(1);
+  }
+}
+
+// `get` reports absent unless the test says otherwise, so the namespace-create path runs and
+// applied resources are treated as newly created (which is what makes rollback delete them).
+if (args[0] === 'get' && process.env.KUBECTL_NS_EXISTS !== '1') {
+  process.stderr.write('Error from server (NotFound): not found\n');
+  process.exit(1);
+}
+
+if (args[0] === 'version') {
+  process.stdout.write(JSON.stringify({ clientVersion: { gitVersion: 'v1.31.0' } }) + '\n');
+  process.exit(0);
+}
+
+if (args[0] === 'cluster-info') {
+  process.stdout.write('Kubernetes control plane is running at https://127.0.0.1:6443\n');
+  process.exit(0);
+}
+
+process.stdout.write(`stub kubectl ok: ${line}\n`);
+process.exit(0);
