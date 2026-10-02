@@ -117,7 +117,7 @@ test('applies manifests and waits for the rollout on the happy path', async () =
 
   // Rollout is awaited on the Deployment, with the configured timeout, and not on the Service.
   assert.ok(
-    result.commands.includes('rollout status deployment/my-workload -n my-namespace --timeout=600s'),
+    result.commands.includes('rollout status deployment my-workload --namespace my-namespace --timeout=600s'),
     `expected rollout wait, got: ${JSON.stringify(result.commands)}`,
   );
   assert.ok(
@@ -134,7 +134,7 @@ test('derives the rollout target from the manifest kind, not the file name', asy
 
   assert.strictEqual(result.succeeded, true, `expected success, got: ${result.output}`);
   assert.ok(
-    result.commands.includes('rollout status statefulset/my-sts -n my-namespace --timeout=600s'),
+    result.commands.includes('rollout status statefulset my-sts --namespace my-namespace --timeout=600s'),
     `expected statefulset rollout wait, got: ${JSON.stringify(result.commands)}`,
   );
 });
@@ -208,10 +208,10 @@ test('deletes applied resources in reverse order when the rollout fails', async 
   assert.strictEqual(result.succeeded, false, 'a failed rollout must fail the step');
 
   const deleteDeployment = result.commands.indexOf(
-    'delete deployment/my-workload -n my-namespace --ignore-not-found',
+    'delete Deployment my-workload --namespace my-namespace --ignore-not-found',
   );
   const deleteService = result.commands.indexOf(
-    'delete service/my-workload-svc -n my-namespace --ignore-not-found',
+    'delete Service my-workload-svc --namespace my-namespace --ignore-not-found',
   );
   assert.ok(deleteDeployment !== -1, 'the Deployment must be deleted on failure');
   assert.ok(deleteService !== -1, 'the Service must be deleted on failure');
@@ -254,6 +254,107 @@ test('fails when no manifests are supplied', async () => {
   const result = await run({ resourceFiles: [], options: defaultOptions });
   assert.strictEqual(result.succeeded, false);
   assert.ok(/No Kubernetes manifests/.test(result.output || ''), `unexpected error: ${result.output}`);
+});
+
+/**
+ * Hostile input tests. Every value below arrives over a socket from the backend, originating as
+ * text typed into a web UI, so the agent must reject it rather than hand it to kubectl or the
+ * filesystem.
+ */
+test('rejects a manifest file name that escapes the deployment folder', async () => {
+  for (const name of ['../../../../escape.yaml', 'a/../../b.yaml', '/etc/passwd', 'sub/dir.yaml', '..']) {
+    const result = await run({
+      resourceFiles: [{ name, data: deploymentYaml }],
+      options: defaultOptions,
+    });
+    assert.strictEqual(result.succeeded, false, `file name ${name} must be rejected`);
+    assert.ok(
+      /manifest file name|outside the deployment folder/i.test(result.output || ''),
+      `unexpected error for ${name}: ${result.output}`,
+    );
+    // Nothing may be applied when a name is rejected.
+    assert.ok(!result.commands.some((c) => c.startsWith('apply')), `${name} must not reach kubectl`);
+  }
+});
+
+test('does not write outside the deployment folder when given a traversing name', async () => {
+  const marker = path.join(os.tmpdir(), `hydra-traversal-${Date.now()}.yaml`);
+  const relative = path.relative(path.join(os.tmpdir(), 'hydra-k8s', 'probe'), marker);
+  await run({ resourceFiles: [{ name: relative, data: deploymentYaml }], options: defaultOptions });
+  assert.ok(!fs.existsSync(marker), `traversing name wrote to ${marker}`);
+});
+
+test('rejects a namespace that kubectl would read as a flag', async () => {
+  for (const ns of ['--kubeconfig=/tmp/evil.yaml', '-n', '--as=system:admin', 'UPPER', '../escape', '']) {
+    const result = await run({
+      resourceFiles: [{ name: 'deployment.yaml', data: deploymentYaml }],
+      options: { ...defaultOptions, namespace: ns },
+    });
+    assert.strictEqual(result.succeeded, false, `namespace ${JSON.stringify(ns)} must be rejected`);
+    assert.ok(
+      !result.commands.some((c) => c.includes(ns) && ns.length > 2),
+      `namespace ${ns} must never reach kubectl`,
+    );
+  }
+});
+
+test('rejects a manifest whose kind or name would be read as a flag', async () => {
+  const hostileKind = `apiVersion: apps/v1\nkind: --kubeconfig=/tmp/evil\nmetadata:\n  name: ok\n`;
+  const hostileName = `apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: --all\n`;
+  for (const data of [hostileKind, hostileName]) {
+    const result = await run({
+      resourceFiles: [{ name: 'deployment.yaml', data }],
+      options: defaultOptions,
+    });
+    assert.strictEqual(result.succeeded, false, 'hostile kind/name must be rejected');
+    assert.ok(/Invalid Kubernetes/i.test(result.output || ''), `unexpected error: ${result.output}`);
+    assert.ok(!result.commands.some((c) => c.startsWith('apply')), 'must not reach kubectl');
+  }
+});
+
+test('fails rather than silently skipping the rollout on a multi-document manifest', async () => {
+  const result = await run({
+    resourceFiles: [{ name: 'deployment.yaml', data: `${deploymentYaml}---\n${serviceYaml}` }],
+    options: defaultOptions,
+  });
+  assert.strictEqual(result.succeeded, false, 'a multi-object manifest must fail loudly');
+  assert.ok(/exactly one Kubernetes object/i.test(result.output || ''), `unexpected error: ${result.output}`);
+});
+
+test('does not delete a pre-existing resource when the rollout fails', async () => {
+  // KUBECTL_NS_EXISTS makes the stub report every `get` as success, i.e. the resource already
+  // existed, so a failed rollout must leave it alone rather than destroying a working resource.
+  const result = await run(
+    {
+      resourceFiles: [{ name: 'deployment.yaml', data: deploymentYaml }],
+      options: defaultOptions,
+    },
+    { KUBECTL_FAIL: 'rollout status', KUBECTL_NS_EXISTS: '1' },
+  );
+
+  assert.strictEqual(result.succeeded, false);
+  assert.ok(
+    !result.commands.some((c) => c.startsWith('delete ')),
+    `pre-existing resource must not be deleted: ${JSON.stringify(result.commands)}`,
+  );
+});
+
+test('removes the deployment folder when it finishes', async () => {
+  const deploymentId = `cleanup-${Date.now()}`;
+  const folder = path.join(os.tmpdir(), 'hydra-k8s', deploymentId);
+  const previous = { ...process.env };
+  process.env.PATH = `${stubDir}${path.delimiter}${process.env.PATH}`;
+  try {
+    await handleK8sDeployment(
+      { resourceFiles: [{ name: 'deployment.yaml', data: deploymentYaml }], options: defaultOptions },
+      noopLogger,
+      fakeSocket,
+      deploymentId,
+    );
+  } finally {
+    process.env = previous;
+  }
+  assert.ok(!fs.existsSync(folder), `deployment folder left behind at ${folder}`);
 });
 
 test('fails when the cluster is unreachable', async () => {

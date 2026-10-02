@@ -38,6 +38,8 @@ export const DeploymentErrorCodes = {
   K8S_MANIFEST_INVALID: 'K8S_MANIFEST_INVALID',
   K8S_APPLY_FAILED: 'K8S_APPLY_FAILED',
   K8S_ROLLOUT_FAILED: 'K8S_ROLLOUT_FAILED',
+  K8S_INVALID_IDENTIFIER: 'K8S_INVALID_IDENTIFIER',
+  K8S_INVALID_MANIFEST_NAME: 'K8S_INVALID_MANIFEST_NAME',
 } as const;
 
 export type DeploymentErrorCode = typeof DeploymentErrorCodes[keyof typeof DeploymentErrorCodes];

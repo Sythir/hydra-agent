@@ -21,9 +21,10 @@ for (const pattern of fail) {
   }
 }
 
-// `get namespace` reports absent unless the test says otherwise, so the create path runs.
-if (args[0] === 'get' && args[1] === 'namespace' && process.env.KUBECTL_NS_EXISTS !== '1') {
-  process.stderr.write('Error from server (NotFound): namespaces "x" not found\n');
+// `get` reports absent unless the test says otherwise, so the namespace-create path runs and
+// applied resources are treated as newly created (which is what makes rollback delete them).
+if (args[0] === 'get' && process.env.KUBECTL_NS_EXISTS !== '1') {
+  process.stderr.write('Error from server (NotFound): not found\n');
   process.exit(1);
 }
 

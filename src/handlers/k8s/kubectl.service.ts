@@ -10,11 +10,28 @@ export interface KubectlResult {
 }
 
 /**
+ * Describes a kubectl invocation for logs and error messages.
+ *
+ * Only the subcommand and non-flag-looking tokens are included. Everything that starts with a dash
+ * is replaced, because a kubectl flag can legitimately carry a token or a kubeconfig path and these
+ * strings end up in deployment logs that are shown in the web UI.
+ */
+export function describeArgs(args: string[]): string {
+  return args.map((arg) => (arg.startsWith('-') && arg.includes('=') ? `${arg.split('=')[0]}=<redacted>` : arg)).join(' ');
+}
+
+/** Reduces a result to a short human-readable reason. */
+export function describeFailure(result: KubectlResult): string {
+  return (result.stderr || result.stdout || 'no output').trim();
+}
+
+/**
  * Runs kubectl with the given arguments.
  *
  * Arguments are passed as an array and the process is spawned without a shell, so manifest paths,
- * namespaces and resource names coming from user configuration can never be interpreted as shell
- * syntax.
+ * namespaces and resource names can never be interpreted as shell syntax. Note that this alone does
+ * not make a value safe: kubectl still parses a leading dash as a flag, so callers must validate
+ * identifiers (see validation.ts) before passing them.
  */
 export async function executeKubectl(
   args: string[],
@@ -23,26 +40,44 @@ export async function executeKubectl(
   timeoutMs: number = 60000,
 ): Promise<KubectlResult> {
   return new Promise((resolve) => {
+    // detached puts kubectl in its own process group so the timeout path can kill any helper it
+    // spawned (credential and exec auth plugins) rather than orphaning them on a long-lived agent.
     const childProcess = spawn('kubectl', args, {
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
     });
 
     let stdout = '';
     let stderr = '';
-    let hasTimedOut = false;
+    // A spawn failure emits both 'error' and 'close', so a single guard is needed rather than one
+    // flag per path, otherwise the first result is overwritten by a less informative second one.
+    let settled = false;
+
+    const settle = (result: KubectlResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      childProcess.stdout?.removeAllListeners();
+      childProcess.stderr?.removeAllListeners();
+      resolve(result);
+    };
 
     const timeoutId = setTimeout(() => {
-      hasTimedOut = true;
       if (childProcess.pid) {
         try {
-          process.kill(childProcess.pid, 'SIGKILL');
+          // Negative pid targets the whole process group.
+          process.kill(-childProcess.pid, 'SIGKILL');
         } catch {
-          // Already gone.
+          try {
+            process.kill(childProcess.pid, 'SIGKILL');
+          } catch {
+            // Already gone.
+          }
         }
       }
       logger(deployFolder, 'error', `kubectl ${args[0]} timed out after ${timeoutMs / 1000} seconds`);
-      resolve({ success: false, stdout, stderr: 'Command timed out', exitCode: null });
+      settle({ success: false, stdout, stderr: 'Command timed out', exitCode: null });
     }, timeoutMs);
 
     childProcess.stdout.on('data', (data) => {
@@ -54,9 +89,7 @@ export async function executeKubectl(
     });
 
     childProcess.on('error', (error) => {
-      clearTimeout(timeoutId);
-      if (hasTimedOut) return;
-      resolve({
+      settle({
         success: false,
         stdout,
         stderr: `Failed to start kubectl: ${error.message}`,
@@ -65,9 +98,7 @@ export async function executeKubectl(
     });
 
     childProcess.on('close', (code) => {
-      clearTimeout(timeoutId);
-      if (hasTimedOut) return;
-      resolve({ success: code === 0, stdout, stderr, exitCode: code });
+      settle({ success: code === 0, stdout, stderr, exitCode: code });
     });
   });
 }
@@ -86,12 +117,9 @@ export async function executeKubectlOrThrow(
   const result = await executeKubectl(args, logger, deployFolder, timeoutMs);
 
   if (!result.success) {
-    const detail = (result.stderr || result.stdout || 'no output').trim();
-    logger(deployFolder, 'error', `kubectl ${args.join(' ')} failed: ${detail}`);
-    throw new DeploymentError(`kubectl ${args.join(' ')} failed: ${detail}`, errorCode, {
-      args,
-      exitCode: result.exitCode,
-    });
+    const summary = `kubectl ${describeArgs(args)} failed: ${describeFailure(result)}`;
+    logger(deployFolder, 'error', summary);
+    throw new DeploymentError(summary, errorCode, { command: args[0], exitCode: result.exitCode });
   }
 
   return result;
@@ -117,9 +145,8 @@ export async function checkKubectlAvailable(logger: LoggerFunc, deployFolder: st
   const cluster = await executeKubectl(['cluster-info'], logger, deployFolder, 20000);
 
   if (!cluster.success) {
-    const detail = (cluster.stderr || cluster.stdout || 'no output').trim();
     throw new DeploymentError(
-      `kubectl cannot reach the cluster: ${detail}. Check the agent's kubeconfig.`,
+      `kubectl cannot reach the cluster: ${describeFailure(cluster)}. Check the agent's kubeconfig.`,
       DeploymentErrorCodes.K8S_CLUSTER_UNREACHABLE,
     );
   }
