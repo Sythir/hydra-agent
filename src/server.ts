@@ -2,6 +2,7 @@ import { io } from 'socket.io-client';
 import os from 'os';
 import { handleDeployment } from './handleDeployment';
 import { handleIisDeployment } from './handlers/iis';
+import { handleK8sDeployment } from './handlers/k8s';
 import { createLogger } from './utils/logMessage';
 import {
   loadEnvironmentConfig,
@@ -13,6 +14,7 @@ import { DEPLOYMENT_STATUS, SOCKET_EVENTS } from './config/constants';
 import { handleAgentUpdate, signalHealthy, isPostUpdateStartup, releaseUpdateLock } from './update';
 import { AgentUpdateMessage, UPDATE_STATUS } from './types/update';
 import { IisDeploymentMessageDto } from './types/iis';
+import { K8sDeploymentMessageDto } from './types/k8s';
 import * as processManager from './utils/processManager';
 
 const args = process.argv.slice(2);
@@ -119,7 +121,7 @@ interface Step {
   id: string;
   name: string;
   type: string;
-  message: AgentDeployMessageDto | IisDeploymentMessageDto | null;
+  message: AgentDeployMessageDto | IisDeploymentMessageDto | K8sDeploymentMessageDto | null;
 }
 
 interface Message {
@@ -219,6 +221,18 @@ async function processQueue() {
         const iisDeployOutput = await handleIisDeployment(step.message as IisDeploymentMessageDto, logger, socket, keepDeployments);
         if (!iisDeployOutput.succeeded) {
           console.error(`IIS deployment failed for step "${step.name}":`, iisDeployOutput.output);
+          isFailed = true;
+          break;
+        }
+      } else if (step.type === 'K8s' && step.message) {
+        const k8sDeployOutput = await handleK8sDeployment(
+          step.message as K8sDeploymentMessageDto,
+          logger,
+          socket,
+          data.id,
+        );
+        if (!k8sDeployOutput.succeeded) {
+          console.error(`Kubernetes deployment failed for step "${step.name}":`, k8sDeployOutput.output);
           isFailed = true;
           break;
         }
