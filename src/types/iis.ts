@@ -6,6 +6,7 @@ export interface IisBinding {
   sslCertificateThumbprint?: string;
   sslCertificateStoreName?: string;
   requireSni?: boolean;
+  enableManagedSsl?: boolean;
 }
 
 export interface IisVirtualDirectory {

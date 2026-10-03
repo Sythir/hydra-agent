@@ -40,6 +40,7 @@ export const DeploymentErrorCodes = {
   K8S_ROLLOUT_FAILED: 'K8S_ROLLOUT_FAILED',
   K8S_INVALID_IDENTIFIER: 'K8S_INVALID_IDENTIFIER',
   K8S_INVALID_MANIFEST_NAME: 'K8S_INVALID_MANIFEST_NAME',
+  IIS_SSL_PROVISIONING_FAILED: 'IIS_SSL_PROVISIONING_FAILED',
 } as const;
 
 export type DeploymentErrorCode = typeof DeploymentErrorCodes[keyof typeof DeploymentErrorCodes];

@@ -8,3 +8,4 @@ export * from './iis-auth.service';
 export * from './iis-config.service';
 export * from './iis-warmup.service';
 export * from './iis-app-init.service';
+export * from './iis-ssl.service';
