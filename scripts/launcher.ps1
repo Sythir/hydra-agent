@@ -78,7 +78,23 @@ function Start-Agent {
     }
 
     try {
-        return Start-Process @startParams
+        $proc = Start-Process @startParams
+
+        # A Process object from Start-Process -PassThru does not hold the native process handle
+        # open, so once the process exits the kernel object is released and .ExitCode reads back
+        # as $null. Touching .Handle forces .NET to cache the handle while the process is still
+        # alive, which is the only way the exit code survives WaitForExit(). Without this the
+        # agent's update exit code (100) is lost, the switch below falls through to the "crashed"
+        # branch, and updates are applied without a health check or rollback.
+        if ($proc) {
+            try {
+                $null = $proc.Handle
+            } catch {
+                Write-Log "WARN" "Could not cache process handle: $($_.Exception.Message)"
+            }
+        }
+
+        return $proc
     } catch {
         Write-Log "ERROR" "Failed to start agent: $($_.Exception.Message)"
         return $null
@@ -162,7 +178,14 @@ Write-Log "INFO" "Hydra Agent Launcher started (AGENT_HOME: $AgentHome)"
 
 while (-not $stopLauncher) {
     if (Test-Path $RestartSignal) {
-        Invoke-Update | Out-Null
+        if (Invoke-Update) {
+            # A binary swap applied here means the agent asked for an update but its exit code was
+            # not seen as 100 (or the signal landed while the launcher was between starts). The new
+            # binary is a fresh attempt, not a continuation of a crash loop, so the restart budget
+            # is reset. Otherwise accumulated "crashes" from lost exit codes kill the launcher.
+            $restartCount = 0
+        }
+        Remove-Item $UpdateLock -Force -ErrorAction SilentlyContinue
     }
 
     if (-not (Test-Path $CurrentBinary)) {
@@ -189,6 +212,19 @@ while (-not $stopLauncher) {
     $process.WaitForExit()
     $exitCode = $process.ExitCode
 
+    if ($null -eq $exitCode) {
+        # Should not happen now that Start-Agent caches the process handle, but never silently fall
+        # through to the "crashed" branch: a lost exit code there applies updates with no health
+        # check and burns the restart budget. Infer intent from the restart signal instead.
+        if (Test-Path $RestartSignal) {
+            Write-Log "WARN" "Agent exit code unavailable but restart signal present - treating as update restart"
+            $exitCode = 100
+        } else {
+            Write-Log "ERROR" "Agent exit code unavailable - treating as crash"
+            $exitCode = -1
+        }
+    }
+
     Write-Log "INFO" "Agent exited with code: $exitCode"
 
     # NOTE: 'break'/'continue' inside a PowerShell switch act on the switch, not on the enclosing
@@ -213,6 +249,10 @@ while (-not $stopLauncher) {
 
                     $process.WaitForExit()
                     $newExitCode = $process.ExitCode
+                    if ($null -eq $newExitCode) {
+                        $newExitCode = if (Test-Path $RestartSignal) { 100 } else { -1 }
+                        Write-Log "WARN" "Post-update exit code unavailable - inferred $newExitCode"
+                    }
 
                     if ($newExitCode -eq 0) {
                         Write-Log "INFO" "Agent exited normally after update"
