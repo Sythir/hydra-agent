@@ -2,7 +2,7 @@ import { IisBinding, ExistingBinding } from '../../types/iis';
 import { LoggerFunc } from '../../utils/logMessage';
 import { DeploymentError, DeploymentErrorCodes } from '../../types/DeploymentError';
 import { executePowerShellOrThrow, escapePowerShellString } from './powershell.service';
-import { provisionCertificate, ManagedSslResult } from './iis-ssl.service';
+import { provisionCertificate, ensureWinAcme, ManagedSslResult } from './iis-ssl.service';
 import { Socket } from 'socket.io-client';
 
 /**
@@ -310,6 +310,30 @@ export async function assertCertificatesAvailable(
   }
   logger(deployFolder, 'info', `Validating ${requests.length} SSL certificate(s) before changing bindings`);
   await resolveCertificateStores(requests, logger, deployFolder);
+}
+
+/**
+ * Installs win-acme up front when any binding needs a managed certificate.
+ *
+ * Provisioning itself happens later, in configureBindings, because it must run against the site
+ * that is about to serve the domain. But downloading and unpacking win-acme is a network operation
+ * with no dependency on the deployment, and it is the step most likely to fail (a bad URL, a proxy,
+ * a rate limit). Doing it here means such a failure aborts before the release is swapped in, rather
+ * than rolling back a site that had already deployed successfully.
+ */
+export async function assertManagedSslReady(
+  bindings: IisBinding[],
+  logger: LoggerFunc,
+  deployFolder: string,
+): Promise<void> {
+  const managed = bindings.filter((b) => b.protocol === 'https' && b.enableManagedSsl && b.hostHeader);
+  if (managed.length === 0) {
+    return;
+  }
+
+  const domains = managed.map((b) => b.hostHeader).join(', ');
+  logger(deployFolder, 'info', `Preparing managed SSL for ${managed.length} domain(s) before deploying: ${domains}`);
+  await ensureWinAcme(logger, deployFolder);
 }
 
 export interface BindingConflict {
