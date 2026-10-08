@@ -145,72 +145,88 @@ export async function provisionCertificate(
 
   await ensureWinAcme(logger, deployFolder);
 
-  // Use win-acme in unattended mode:
-  //   --target manual: specify the hostname explicitly
-  //   --validation selfhosting: use the built-in HTTP validation server (port 80 must be open)
-  //   --store certificatestore: store the cert in the Windows certificate store
-  //   --certificatestore WebHosting: use the WebHosting store (standard for IIS)
-  //   --installation iis: bind the certificate to the IIS site
-  //   --installationsiteid: bind to the correct IIS site
+  // Unattended invocation:
+  //   --source manual --host: issue for exactly this hostname (--target is the pre-2.1.18 alias)
+  //   --validation selfhosting: win-acme's own listener answers the HTTP-01 challenge on port 80
+  //   --store certificatestore --certificatestore WebHosting: the store IIS binds from
+  //   --installation none: this agent assigns the binding itself, in configureBindings, using the
+  //     thumbprint returned below. Unattended mode has NO default installation plugin, and omitting
+  //     the switch makes win-acme stop and ask which one to use, which never returns.
+  //   --notaskscheduler: the scheduled task is created on a later renewal run, not here; prompting
+  //     for it is another way an unattended run can block.
+  //   --friendlyname: pins a name we can find the certificate by, instead of guessing its subject.
+  const friendlyName = `hydra-${hostname}`;
   const result = await executePowerShellOrThrow(
     '$wacsExe = \'' + escapePowerShellString(WIN_ACME_EXE) + '\'\n' +
-    '$output = & $wacsExe --target manual --host \'' + escapePowerShellString(hostname) + '\' ' +
+    '$output = & $wacsExe --source manual --host \'' + escapePowerShellString(hostname) + '\' ' +
+    '--friendlyname \'' + escapePowerShellString(friendlyName) + '\' ' +
     '--validation selfhosting --store certificatestore --certificatestore WebHosting ' +
+    '--installation none --notaskscheduler ' +
     '--closeonfinish --nocache --accepttos --emailaddress \'admin@' + escapePowerShellString(hostname) + '\' 2>&1\n' +
     '$exitCode = $LASTEXITCODE\n' +
     '$outputStr = $output -join [Environment]::NewLine\n' +
     'Write-Output $outputStr\n' +
     'if ($exitCode -ne 0) {\n' +
-    '  throw "win-acme exited with code $exitCode"\n' +
+    '  throw "win-acme exited with code $exitCode`n$outputStr"\n' +
     '}\n',
+    logger,
+    deployFolder,
+    DeploymentErrorCodes.IIS_SSL_PROVISIONING_FAILED,
+    // Issuing a certificate involves ACME round trips and HTTP-01 validation, which is well beyond
+    // the default PowerShell timeout.
+    300000,
+  );
+
+  // Read the certificate straight out of the store rather than scraping stdout.
+  //
+  // win-acme never prints the thumbprint: only the `script` installation plugin exposes it, via a
+  // {CertThumbprint} placeholder. The previous code matched any 40 hex characters in the output,
+  // which matched nothing on a successful run, so every provisioning attempt failed at the parse
+  // step even when the certificate had been issued correctly.
+  const lookup = await executePowerShellOrThrow(
+    `
+    $friendly = '${escapePowerShellString(friendlyName)}'
+    # Not $host: that is a read-only automatic variable and assigning it throws.
+    $targetHost = '${escapePowerShellString(hostname)}'
+
+    $cert = Get-ChildItem 'Cert:\\LocalMachine\\WebHosting', 'Cert:\\LocalMachine\\My' -ErrorAction SilentlyContinue |
+      Where-Object { $_.FriendlyName -eq $friendly -or $_.Subject -eq "CN=$targetHost" } |
+      Where-Object { $_.NotAfter -gt (Get-Date) } |
+      Sort-Object NotAfter -Descending |
+      Select-Object -First 1
+
+    if (-not $cert) {
+      throw "No valid certificate for $targetHost found in the WebHosting or My store after provisioning"
+    }
+
+    Write-Output "$($cert.Thumbprint)|$($cert.NotAfter.ToString('o'))"
+    `,
     logger,
     deployFolder,
     DeploymentErrorCodes.IIS_SSL_PROVISIONING_FAILED,
   );
 
-  // Parse the thumbprint from win-acme output.
-  // win-acme outputs lines like: "Store with CertificateStore: [thumbprint]"
-  // or "Certificate [hostname] created" with thumbprint in the log.
-  const thumbprintMatch = result.match(/([0-9A-Fa-f]{40})/);
-  if (!thumbprintMatch) {
-    logger(deployFolder, 'error', `Could not parse certificate thumbprint from win-acme output`);
+  const [rawThumbprint, rawExpiry] = lookup.trim().split('|');
+  const thumbprint = (rawThumbprint || '').trim().toUpperCase();
+
+  if (!/^[0-9A-F]{40}$/.test(thumbprint)) {
+    logger(deployFolder, 'error', `win-acme output:\n${result.trim().slice(-2000)}`);
     throw new DeploymentError(
-      `Failed to parse certificate thumbprint from win-acme output for ${hostname}`,
+      `Certificate for ${hostname} was not found in the certificate store after provisioning`,
       DeploymentErrorCodes.IIS_SSL_PROVISIONING_FAILED,
-      { hostname, output: result.substring(0, 500) },
+      { hostname, output: result.slice(-2000) },
     );
   }
 
-  const thumbprint = thumbprintMatch[1].toUpperCase();
+  const expiryDate = (rawExpiry || '').trim();
   logger(deployFolder, 'info', `Certificate provisioned with thumbprint: ${thumbprint.substring(0, 8)}...`);
-
-  // Read the expiry date from the certificate store
-  const expiryResult = await executePowerShellOrThrow(
-    `
-    $cert = Get-ChildItem 'Cert:\\LocalMachine\\WebHosting' | Where-Object { $_.Thumbprint -eq '${escapePowerShellString(thumbprint)}' }
-    if ($cert) {
-      Write-Output $cert.NotAfter.ToString('o')
-    } else {
-      $cert = Get-ChildItem 'Cert:\\LocalMachine\\My' | Where-Object { $_.Thumbprint -eq '${escapePowerShellString(thumbprint)}' }
-      if ($cert) {
-        Write-Output $cert.NotAfter.ToString('o')
-      } else {
-        Write-Output ''
-      }
-    }
-    `,
-    logger,
-    deployFolder,
-  );
-
-  const expiryDate = expiryResult.trim();
   if (expiryDate) {
     logger(deployFolder, 'info', `Certificate expires: ${expiryDate}`);
   }
 
   return {
     thumbprint,
-    expiryDate: expiryDate || '',
+    expiryDate,
     domain: hostname,
   };
 }
