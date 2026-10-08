@@ -13,7 +13,7 @@ import { ExecutionResultReturnType } from '../../types/ExecutionResultReturnType
 import { checkIisAvailable } from './powershell.service';
 import { ensureAppPool, recycleAppPool, deleteAppPool, appPoolExists } from './iis-app-pool.service';
 import { ensureSite, startSite, deleteSite, siteExists, getSiteConfig, deleteVirtualDirectory, updateSitePhysicalPath, setSiteAppPool, validateSiteExists } from './iis-site.service';
-import { configureBindings, getExistingBindings, restoreBindings, assertNoBindingConflicts, assertCertificatesAvailable } from './iis-binding.service';
+import { configureBindings, getExistingBindings, restoreBindings, assertNoBindingConflicts, assertCertificatesAvailable, assertManagedSslReady } from './iis-binding.service';
 import { configureAuthentication } from './iis-auth.service';
 import { deployConfigFiles } from './iis-config.service';
 import { warmupSite } from './iis-warmup.service';
@@ -121,6 +121,9 @@ export async function handleIisDeployment(
       logger,
       deployFolder,
     );
+    // Install win-acme before anything is changed: a download failure here must not roll back a
+    // deployment that otherwise succeeded.
+    await assertManagedSslReady(message.site.bindings, logger, deployFolder);
 
     emitProgress(socket, deploymentId, 'downloading', 'Downloading application package...', 10);
 

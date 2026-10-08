@@ -9,7 +9,23 @@ import { executePowerShellOrThrow, escapePowerShellString } from './powershell.s
  */
 const WIN_ACME_DIR = 'C:\\ProgramData\\win-acme';
 const WIN_ACME_EXE = path.join(WIN_ACME_DIR, 'wacs.exe');
-const WIN_ACME_DOWNLOAD_URL = 'https://github.com/win-acme/win-acme/releases/latest/download/win-acme.v2.x64.pluggable.zip';
+
+/**
+ * win-acme names its release assets with the full version, e.g.
+ * `win-acme.v2.2.9.1701.x64.pluggable.zip`. There is deliberately no version-independent file name,
+ * so `/releases/latest/download/<name>` cannot be used with a guess: GitHub redirects to the newest
+ * tag, but the asset name still has to match exactly, and `win-acme.v2.x64.pluggable.zip` returns a
+ * 404 from every release there has ever been.
+ *
+ * The asset is therefore resolved from the releases API at install time, with a pinned version as
+ * the fallback for hosts that cannot reach the API (unauthenticated GitHub API calls are rate
+ * limited per IP, which a busy deployment server can hit).
+ */
+const WIN_ACME_RELEASES_API = 'https://api.github.com/repos/win-acme/win-acme/releases/latest';
+const WIN_ACME_FALLBACK_VERSION = 'v2.2.9.1701';
+const WIN_ACME_FALLBACK_URL =
+  `https://github.com/win-acme/win-acme/releases/download/${WIN_ACME_FALLBACK_VERSION}/` +
+  `win-acme.${WIN_ACME_FALLBACK_VERSION}.x64.pluggable.zip`;
 
 export interface ManagedSslResult {
   thumbprint: string;
@@ -51,7 +67,37 @@ export async function installWinAcme(logger: LoggerFunc, deployFolder: string): 
     }
 
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -Uri '${WIN_ACME_DOWNLOAD_URL}' -OutFile $zipPath -UseBasicParsing
+
+    # Resolve the real asset name from the releases API. win-acme embeds the full version in the
+    # file name, so it cannot be hardcoded without going stale at the next release.
+    $downloadUrl = $null
+    try {
+      $release = Invoke-RestMethod -Uri '${WIN_ACME_RELEASES_API}' -UseBasicParsing -Headers @{ 'User-Agent' = 'hydra-agent' }
+      $asset = $release.assets |
+        Where-Object { $_.name -like 'win-acme.v*.x64.pluggable.zip' } |
+        Select-Object -First 1
+      if ($asset) {
+        $downloadUrl = $asset.browser_download_url
+        Write-Output "Resolved win-acme $($release.tag_name): $($asset.name)"
+      } else {
+        Write-Output 'No matching x64 pluggable asset in the latest release, using the pinned version'
+      }
+    } catch {
+      Write-Output "Could not query the win-acme releases API ($($_.Exception.Message)), using the pinned version"
+    }
+
+    if (-not $downloadUrl) {
+      $downloadUrl = '${WIN_ACME_FALLBACK_URL}'
+    }
+
+    Write-Output "Downloading win-acme from $downloadUrl"
+    Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
+
+    # Expand-Archive reports a confusing error on a truncated or HTML error page, so check that the
+    # download actually looks like a zip before extracting.
+    if (-not (Test-Path $zipPath) -or (Get-Item $zipPath).Length -lt 100000) {
+      throw "win-acme download failed or is too small to be the expected archive: $downloadUrl"
+    }
 
     Expand-Archive -Path $zipPath -DestinationPath $installDir -Force
     Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
